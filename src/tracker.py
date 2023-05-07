@@ -1,6 +1,6 @@
+# TODO: implement our own HTTP library
 import requests
 from pprint import pprint
-from hashlib import sha1
 import logging
 import bencodepy
 
@@ -11,7 +11,7 @@ class Tracker:
 
   def __request(self):
     params = {
-      'info_hash': sha1(self.torrent.info_value).digest(),
+      'info_hash': self.torrent.info_hash,
       'peer_id': self.torrent.client.peer_id,
       'port': self.torrent.client.listen_port,
       'uploaded': 0,

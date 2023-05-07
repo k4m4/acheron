@@ -6,6 +6,8 @@ import logging
 LISTEN_PORT = 6881
 CLIENT_ID = b'-AH0001-'
 
+# TODO: listen
+
 class Client:
   def __init__(self):
     logging.basicConfig(level=logging.DEBUG)
