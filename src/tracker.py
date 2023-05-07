@@ -22,6 +22,7 @@ class Tracker:
     logging.info(f'Requesting from tracker {self.torrent.announce_url}')
     r = requests.get(self.torrent.announce_url, params=params)
     if r.status_code != 200:
+      # TODO: gracefully handle error
       logging.error(f'Error requesting from tracker: {r.status_code}')
       logging.error(r.content)
       return

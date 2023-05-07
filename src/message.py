@@ -37,3 +37,20 @@ class HandshakeMessage(Message):
     consumed_byte_cnt = 1 + struct.calcsize(unpack_format)
 
     return HandshakeMessage(protocol_string, info_hash, peer_id), buffer[consumed_byte_cnt:]
+
+class RequestMessage(Message):
+  def __init__(self, index, begin, length):
+    self.index = index
+    self.begin = begin
+    self.length = length
+
+  def to_bytes(self):
+    return struct.pack('!III', self.index, self.begin, self.length)
+
+  def __str__(self):
+    return f'RequestMessage(index={self.index}, begin={self.begin}, length={self.length})'
+
+  @staticmethod
+  def from_bytes(buffer):
+    index, begin, length = struct.unpack('!III', buffer)
+    return RequestMessage(index, begin, length)

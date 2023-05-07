@@ -30,6 +30,9 @@ class Peer:
 
     self.handshook = False
     self.human_peer_id = None
+    self.has = set()
+
+    self.socket = None
 
     self.__debug(f'Creating peer')
 
@@ -76,11 +79,118 @@ class Peer:
   def __on_data(self, buffer):
     if not self.handshook:
       # TODO: handle the case where no handshake is received first, but an error message is initially received
-      buffer = self.__on_handshake(buffer)
+      try:
+        buffer = self.__on_handshake(buffer)
+      except struct.error:
+        # Handshake does not yet have enough bytes to complete
+        return buffer
       self.handshook = True
       self.__debug(f'Handshake completed')
       return buffer
     # TODO: handle non-handshake messages
+    length_prefix, = struct.unpack('!I', buffer[:4])
+    buffer = buffer[4:]
+    if length_prefix == 0:
+      self.__on_keep_alive()
+      return buffer
+    message_buffer = buffer[:length_prefix]
+    message_id, = struct.unpack('!B', message_buffer[:1])
+    message_buffer = message_buffer[1:]
+
+    try:
+      # TODO: refactor using decorators
+      # TODO: check that the length correctly corresponds to the message id
+      [
+        self.__on_choke,
+        self.__on_unchoke,
+        self.__on_interested,
+        self.__on_not_interested,
+        self.__on_have,
+        self.__on_bitfield,
+        self.__on_request,
+        self.__on_piece,
+        self.__on_cancel,
+        self.__on_port
+      ][message_id](message_buffer)
+    except IndexError:
+      self.__warn(f'Invalid message id: {message_id}')
+    return buffer
+
+  # TODO: DRY these 4 functions
+  def __on_choke(self, message_buffer):
+    self.__debug(f'Received choke message')
+    self.peer_choking = True
+
+  def __on_unchoke(self, message_buffer):
+    self.__debug(f'Received unchoke message')
+    self.peer_choking = False
+
+  def __on_interested(self, message_buffer):
+    self.__debug(f'Received interested message')
+    self.peer_interested = True
+
+  def __on_not_interested(self, message_buffer):
+    self.__debug(f'Received not interested message')
+    self.peer_interested = False
+
+  def __on_have(self, message_buffer):
+    piece_index, = struct.unpack('!I', message_buffer[:4])
+    message_buffer = message_buffer[4:]
+    self.__debug(f'Received have message for piece {piece_index}')
+    self.__mark_has(piece_index)
+    self.has.add(piece_index)
+
+  def __ensure_piece_index_in_range(self, piece_index):
+    if not 0 <= piece_index < self.torrent.num_pieces:
+      # TODO: handle this gracefully
+      raise ProtocolException(f'Invalid piece index: {piece_index}')
+
+  def __mark_has(self, piece_index):
+    self.__ensure_piece_index_in_range(piece_index)
+    self.has.add(piece_index)
+
+  def __on_bitfield(self, message_buffer):
+    # TODO: ensure this message was sent immediately after the handshake
+    # TODO: ensure length of bitfield message matches the expected length
+    self.__debug(f'Received bitfield message')
+
+    for i, byte in enumerate(message_buffer):
+      for j in range(8):
+        if byte & (1 << (7 - j)):
+          self.__mark_has(i * 8 + j)
+
+    self.__debug(f'Peer has pieces: {self.has}')
+
+  def __on_request(self, message_buffer):
+    request_message = RequestMessage(message_buffer)
+
+    self.__ensure_piece_index_in_range(request_message.index)
+    self.__debug(f'Received request message for piece {request_message.index} at offset {request_message.begin} with length {request_message.length}')
+
+    # TODO: respond to request
+
+  def __on_piece(self, message_buffer):
+    index, begin = struct.unpack('!II', message_buffer[:8])
+    block = message_buffer[8:]
+
+    self.__ensure_piece_index_in_range(index)
+    self.__debug(f'Received piece message for piece {index} at offset {begin} with length {len(block)}')
+
+    # TODO: handle piece
+
+  def __on_cancel(self, message_buffer):
+    index, begin, length = struct.unpack('!III', message_buffer)
+
+    self.__ensure_piece_index_in_range(index)
+    self.__debug(f'Received cancel message for piece {index} at offset {begin} with length {length}')
+
+  def __on_port(self, message_buffer):
+    port, = struct.unpack('!H', message_buffer)
+
+    self.__debug(f'Received port message with port {port}')
+
+  def __on_keep_alive(self):
+    self.__debug(f'Received keep-alive message')
 
   def __on_handshake(self, buffer):
     handshake_message, remaining_buffer = HandshakeMessage.from_bytes(buffer)
@@ -114,6 +224,7 @@ class Peer:
           self.__warn(f"{match['warn']}: expected {match['expected']}, got {match['actual']}")
     self.human_peer_id = peer_id_to_human_peer_id(self.peer_id)
 
+    # TODO: show reserved bits
     self.__debug(f'Remote peer is running {self.human_peer_id}')
     return remaining_buffer
 
@@ -128,9 +239,11 @@ class Peer:
 
     self.__send_message(handshake_message)
 
+  def __send_request(self):
+    self.__debug(f'Sending request')
+
   def __send_message(self, message):
     self.__debug('Sending message')
-    self.__debug(message.to_bytes())
 
     self.socket.send(message.to_bytes())
 

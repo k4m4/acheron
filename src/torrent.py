@@ -7,9 +7,23 @@ from hashlib import sha1
 
 class Torrent:
   def __init__(self, client, bencoded_metadata):
+    self.announce_url = None
+    self.comment = None
+    self.created_by = None
+    self.creation_date = None
+    self.info_value = None
+    self.info_hash = None
+    self.num_piece = None
+    self.files = None
+    self.length = None
+    self.name = None
+    self.piece_length = None
+    self.pieces = None
+
     self.__init_from_metadata(bencoded_metadata)
     self.client = client
     self.tracker = Tracker(self)
+    self.have = set()
 
     logging.debug(f'Found {len(self.tracker.peers_info)} peers:')
 
@@ -21,6 +35,8 @@ class Torrent:
       self.peers.append(peer)
 
   def __init_from_metadata(self, bencoded_metadata):
+    logging.debug('Parsing torrent metadata')
+
     decoded = bencodepy.decode(bencoded_metadata)
     self.announce_url = decoded[b'announce']
     self.comment = decoded[b'comment']
@@ -28,7 +44,14 @@ class Torrent:
     self.creation_date = decoded[b'creation date']
     info = decoded[b'info']
     self.info_value = bencodepy.encode(info)
+    if len(info[b'pieces']) % 20 != 0:
+      # TODO: gracefully handle this
+      # TODO: custom exception here for file format errors
+      raise Exception('Invalid pieces length')
+    self.num_pieces = len(info[b'pieces']) // 20
     self.info_hash = sha1(self.info_value).digest()
+
+    logging.debug(f'Info hash is {self.info_hash.hex()}')
 
     if b'files' in info: # multifile mode
       self.files = info[b'files']
