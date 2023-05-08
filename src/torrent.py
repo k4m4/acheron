@@ -32,6 +32,9 @@ class Torrent:
     self.peer_manager = PeerManager(self, self.tracker.peers_info)
     self.peer_manager.connect()
 
+  def get_piece_hash(self, index):
+    return self.piece_hashes[index]
+
   def _init_from_metadata(self, bencoded_metadata):
     logging.debug('Parsing torrent metadata')
 
@@ -42,14 +45,18 @@ class Torrent:
     self.creation_date = decoded[b'creation date']
     info = decoded[b'info']
     self.info_value = bencodepy.encode(info)
-    if len(info[b'pieces']) % 20 != 0:
+    hashes_str = info[b'pieces']
+    if len(hashes_str) % 20 != 0:
       # TODO: gracefully handle this
       # TODO: custom exception here for file format errors
       raise Exception('Invalid pieces length')
-    self.num_pieces = len(info[b'pieces']) // 20
+    self.num_pieces = len(hashes_str) // 20
     piece_length = info[b'piece length']
     # TODO: handle this gracefully
     assert self.num_pieces == ceil(info[b'length'] / piece_length)
+    self.piece_hashes = []
+    for i in range(self.num_pieces):
+      self.piece_hashes.append(hashes_str[i*20:(i+1)*20])
     self.info_hash = sha1(self.info_value).digest()
 
     logging.debug(f'Info hash is {self.info_hash.hex()}')
@@ -61,4 +68,3 @@ class Torrent:
       self.length = info[b'length']
       self.name = info[b'name']
       self.piece_length = info[b'piece length']
-      self.pieces = info[b'pieces']

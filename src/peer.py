@@ -5,6 +5,7 @@ from version import peer_id_to_human_peer_id
 from pprint import pprint
 from message import *
 from math import ceil
+from piece import Piece
 
 PROTOCOL_STRING = b'BitTorrent protocol'
 TEST_WITH_LOCAL_PEER = False
@@ -51,6 +52,7 @@ class Peer:
     self.has = set()
 
     self.socket = None
+    self.pending_pieces = {} # piece index => Piece()
 
     self._debug(f'Creating peer')
 
@@ -113,7 +115,6 @@ class Peer:
 
   def _on_data(self, buffer):
     if not self.handshook:
-      # TODO: handle the case where no handshake is received first, but an error message is initially received
       try:
         handshake_message, buffer = HandshakeMessage.from_bytes(buffer)
         self._on_handshake(handshake_message)
@@ -123,10 +124,8 @@ class Peer:
       self.handshook = True
       self._debug(f'Handshake completed')
       return buffer
-    # TODO: handle the case where only a partial message is received
     message = None
     try:
-      # import pdb; pdb.set_trace()
       message, buffer = Message.from_buffer(buffer)
     except ValueError as e:
       self._warn(e)
@@ -149,9 +148,7 @@ class Peer:
   @dispatcher(UnchokeMessage)
   def _on_unchoke(self, _):
     self.peer_choking = False
-
-    request_message = RequestMessage(index=0, begin=0, length=BLOCK_LENGTH)
-    self._send_request(request_message)
+    self.request_piece(0)
 
   @dispatcher(InterestedMessage)
   def _on_interested(self, _):
@@ -167,7 +164,6 @@ class Peer:
 
   def _ensure_piece_index_in_range(self, piece_index):
     if not 0 <= piece_index < self.torrent.num_pieces:
-      # TODO: handle this gracefully
       self.panic(f'Invalid piece index: {piece_index}')
       return
 
@@ -187,7 +183,6 @@ class Peer:
 
     for piece in bitfield_message.pieces:
       self._mark_has(piece)
-    # self._debug(f'Peer has pieces: {self.has}')
 
   @dispatcher(RequestMessage)
   def _on_request(self, request_message):
@@ -197,7 +192,33 @@ class Peer:
   @dispatcher(PieceMessage)
   def _on_piece(self, piece_message):
     self._ensure_piece_index_in_range(piece_message.data['index'])
-    # TODO: handle piece
+
+    piece_index = piece_message.data['index']
+    if piece_index not in self.pending_pieces:
+      def on_completed():
+        self._debug(f'Piece {piece_index} completed')
+        del self.pending_pieces[piece_index]
+
+      def on_error(reason):
+        self.panic(f'Piece {piece_index} failed: {reason}')
+
+      self.pending_pieces[piece_index] = Piece(
+        self,
+        piece_index,
+        self.torrent.piece_length,
+        self.torrent.get_piece_hash(piece_index),
+        BLOCK_LENGTH,
+        on_completed,
+        on_error
+      )
+    piece = self.pending_pieces[piece_index]
+    piece.on_block_arrival(piece_message.data['begin'], piece_message.data['block'])
+
+  def request_piece(self, piece_index):
+    self._ensure_piece_index_in_range(piece_index)
+
+    for i in range(0, self.torrent.piece_length, BLOCK_LENGTH):
+      self._send_request(RequestMessage(index=piece_index, begin=i, length=BLOCK_LENGTH))
 
   @dispatcher(CancelMessage)
   def _on_cancel(self, cancel_message):
@@ -313,7 +334,7 @@ class Peer:
     self.socket.close()
     self._warn(f'Peer panic: {reason}')
     self.is_connected = False
-    if self.panic_callback is not None:
+    if self.panic_callback:
       self.panic_callback(reason)
 
   def __str__(self):
