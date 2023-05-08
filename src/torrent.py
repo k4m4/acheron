@@ -28,12 +28,28 @@ class Torrent:
 
     logging.debug(f'Found {len(self.tracker.peers_info)} peers:')
 
-    self.peers = []
+    self.peers = set()
     for i, peer_info in enumerate(self.tracker.peers_info):
       logging.debug(f'Peer {i}: {peer_info}')
-      peer = Peer(self, peer_info)
+
+      this = self
+
+      class PeerPanicHandler:
+        def __init__(self):
+          self.peer = None
+
+        def update_peer(self, peer):
+          self.peer = peer
+
+        def handle_panic(self, reason):
+          this.peers.remove(self.peer)
+
+      panic_handler = PeerPanicHandler()
+
+      peer = Peer(self, peer_info, panic_handler.handle_panic)
+      panic_handler.update_peer(peer)
       peer.connect()
-      self.peers.append(peer)
+      self.peers.add(peer)
       return
 
   def _init_from_metadata(self, bencoded_metadata):

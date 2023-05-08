@@ -3,20 +3,7 @@ import logging
 import struct
 from version import peer_id_to_human_peer_id
 from pprint import pprint
-from message import (
-  HandshakeMessage,
-  KeepAliveMessage,
-  ChokeMessage,
-  UnchokeMessage,
-  InterestedMessage,
-  NotInterestedMessage,
-  HaveMessage,
-  BitfieldMessage,
-  RequestMessage,
-  PieceMessage,
-  CancelMessage,
-  PortMessage
-)
+from message import *
 from math import ceil
 
 PROTOCOL_STRING = b'BitTorrent protocol'
@@ -26,8 +13,23 @@ BLOCK_LENGTH = 16 * 1024
 class ProtocolException(Exception):
   pass
 
+dispatch_handlers = {}
+
+def dispatcher(message_class):
+  def decorator(method):
+    def wrapper(self, message):
+      method(self, message)
+
+    if message_class not in dispatch_handlers:
+      dispatch_handlers[message_class] = []
+    dispatch_handlers[message_class].append(wrapper)
+
+    return wrapper
+  return decorator
+
 class Peer:
-  def __init__(self, torrent, peer_info):
+  def __init__(self, torrent, peer_info, panic_callback=None):
+    self.panic_callback = panic_callback
     self.torrent = torrent
     if TEST_WITH_LOCAL_PEER:
       self.ip = '127.0.0.1'
@@ -44,6 +46,7 @@ class Peer:
     self.peer_interested = False
 
     self.handshook = False
+    self.received_non_handshake_message = False
     self.human_peer_id = None
     self.has = set()
 
@@ -78,18 +81,25 @@ class Peer:
     buffer = b''
     while True:
       # blocking
-      # self._debug(f'Waiting for data')
-      buffer += self.socket.recv(4096)
+      try:
+        buffer += self.socket.recv(4096)
+      except ConnectionResetError:
+        self.panic('Remote peer closed connection while receiving')
+        return
+
       # self._debug(f'Received {len(buffer)} bytes')
-      ready_to_consume = True
       if not buffer:
         continue
-      while ready_to_consume:
-        ready_to_consume = False
+      while True:
+        old_buffer_len = len(buffer)
         try:
           buffer = self._on_data(buffer)
-          if buffer:
-            ready_to_consume = True
+          if not buffer:
+            # we consumed everything -- no need to keep processing current buffer
+            break
+          if len(buffer) == old_buffer_len:
+            # we consumed nothing -- no need to keep processing current buffer
+            break
         except (struct.error, ValueError) as e:
           self._debug(f'Partial data received: {e}')
 
@@ -97,7 +107,8 @@ class Peer:
     if not self.handshook:
       # TODO: handle the case where no handshake is received first, but an error message is initially received
       try:
-        buffer = self._on_handshake(buffer)
+        handshake_message, buffer = HandshakeMessage.from_bytes(buffer)
+        self._on_handshake(handshake_message)
       except struct.error:
         # Handshake does not yet have enough bytes to complete
         return buffer
@@ -105,117 +116,95 @@ class Peer:
       self._debug(f'Handshake completed')
       return buffer
     # TODO: handle the case where only a partial message is received
-    length_prefix, = struct.unpack('!I', buffer[:4])
-    if length_prefix == 0:
-      buffer = self._on_keep_alive(buffer)
-      return buffer
-    message_id, = struct.unpack('!B', buffer[4:4 + 1])
-
+    message = None
     try:
-      # TODO: refactor using decorators
-      # TODO: check that the length correctly corresponds to the message id
-      message_class = [
-        ChokeMessage,
-        UnchokeMessage,
-        InterestedMessage,
-        NotInterestedMessage,
-        HaveMessage,
-        BitfieldMessage,
-        RequestMessage,
-        PieceMessage,
-        CancelMessage,
-        PortMessage
-      ]
-      message, buffer = message_class[message_id].from_bytes(buffer)
-      self._on_message(message)
-    except IndexError:
-      self._warn(f'Invalid message id: {message_id}')
+      # import pdb; pdb.set_trace()
+      message, buffer = Message.from_buffer(buffer)
+    except ValueError as e:
+      self._warn(e)
+      return buffer
+
+    self._on_message(message)
+    self.received_non_handshake_message = True
     return buffer
 
   def _on_message(self, message):
     self._debug(f'Received message of type {type(message).__name__}: {message}')
 
-    [
-      self._on_choke,
-      self._on_unchoke,
-      self._on_interested,
-      self._on_not_interested,
-      self._on_have,
-      self._on_bitfield,
-      self._on_request,
-      self._on_piece,
-      self._on_cancel,
-      self._on_port
-    ][message.message_id](message)
+    for dispatcher in dispatch_handlers[type(message)]:
+      dispatcher(self, message)
 
-  # TODO: DRY these 4 functions
-  def _on_choke(self, choke_message):
+  @dispatcher(ChokeMessage)
+  def _on_choke(self, _):
     self.peer_choking = True
 
-  def _on_unchoke(self, unchoke_message):
+  @dispatcher(UnchokeMessage)
+  def _on_unchoke(self, _):
     self.peer_choking = False
 
     request_message = RequestMessage(index=0, begin=0, length=BLOCK_LENGTH)
     self._send_request(request_message)
 
-  def _on_interested(self, interested_message):
+  @dispatcher(InterestedMessage)
+  def _on_interested(self, _):
     self.peer_interested = True
 
-  def _on_not_interested(self, not_interested_message):
+  @dispatcher(NotInterestedMessage)
+  def _on_not_interested(self, _):
     self.peer_interested = False
 
+  @dispatcher(HaveMessage)
   def _on_have(self, have_message):
-    # TODO: refactor using MessageHave
-    _, _, piece_index, = struct.unpack_from('!IBI', buffer)
-    buffer = buffer[4 + 1 + 4:]
-    self._mark_has(piece_index)
+    self._mark_has(have_message.data['piece_index'])
 
   def _ensure_piece_index_in_range(self, piece_index):
     if not 0 <= piece_index < self.torrent.num_pieces:
       # TODO: handle this gracefully
-      raise ProtocolException(f'Invalid piece index: {piece_index}')
+      self.panic(f'Invalid piece index: {piece_index}')
+      return
 
   def _mark_has(self, piece_index):
     self._ensure_piece_index_in_range(piece_index)
     self.has.add(piece_index)
 
+  @dispatcher(BitfieldMessage)
   def _on_bitfield(self, bitfield_message):
-    # TODO: ensure this message was sent immediately after the handshake
-    # TODO: handle gracefully
+    if self.received_non_handshake_message:
+      self.panic(f'Bitfield message was not received immediately after handshake')
+      return
+
     if bitfield_message.num_pieces != ceil(self.torrent.num_pieces / 8) * 8:
-      raise ProtocolException(f'Invalid bitfield length. bitfield message num_pieces: {bitfield_message.num_pieces}, torrent num_pieces: {self.torrent.num_pieces}')
+      self.panic(f'Invalid bitfield length. bitfield message num_pieces: {bitfield_message.num_pieces}, torrent num_pieces: {self.torrent.num_pieces}')
+      return
 
     for piece in bitfield_message.pieces:
       self._mark_has(piece)
     # self._debug(f'Peer has pieces: {self.has}')
 
+  @dispatcher(RequestMessage)
   def _on_request(self, request_message):
-    self._ensure_piece_index_in_range(request_message.index)
+    self._ensure_piece_index_in_range(request_message.data['index'])
     # TODO: respond to request
 
+  @dispatcher(PieceMessage)
   def _on_piece(self, piece_message):
-    _, _, index, begin = struct.unpack_from('!IBII', buffer)
-    block = buffer[4 + 1 + 4 + 4:]
-
-    self._ensure_piece_index_in_range(index)
-
+    self._ensure_piece_index_in_range(piece_message.data['index'])
     # TODO: handle piece
 
+  @dispatcher(CancelMessage)
   def _on_cancel(self, cancel_message):
-    _, _, index, begin, length = struct.unpack_from('!IBIII', buffer)
+    self._ensure_piece_index_in_range(cancel_message.data['index'])
 
-    buffer = buffer[4 + 1 + 4 + 4 + 4:]
-
-    self._ensure_piece_index_in_range(index)
-
+  @dispatcher(PortMessage)
   def _on_port(self, port_message):
-    _, _, port, = struct.unpack_from('!IBH', buffer)
+    pass
 
-  def _on_keep_alive(self):
-    self._debug(f'Received keep-alive message')
+  @dispatcher(KeepAliveMessage)
+  def _on_keep_alive(self, keep_alive_message):
+    pass
 
-  def _on_handshake(self, buffer):
-    handshake_message, buffer = HandshakeMessage.from_bytes(buffer)
+  @dispatcher(HandshakeMessage)
+  def _on_handshake(self, handshake_message):
     self._debug(f"Remote client is using protocol {handshake_message.data['protocol_string']}")
     matches = [
       {
@@ -248,7 +237,6 @@ class Peer:
 
     # TODO: show reserved bits
     self._debug(f'Remote peer is running {self.human_peer_id}')
-    return buffer
 
   def _close_with_error(self, msg):
     self._warn(msg)
@@ -312,6 +300,13 @@ class Peer:
 
   def _identifier(self):
     return f'{self.human_peer_id if self.human_peer_id is not None else self.peer_id} ({self.ip})'
+
+  def panic(self, reason):
+    self.socket.close()
+    self._warn(f'Peer panic: {reason}')
+    self.connected = False
+    if self.panic_callback is not None:
+      self.panic_callback(reason)
 
   def __str__(self):
     return f'Peer {self._identifier()}'

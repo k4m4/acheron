@@ -21,6 +21,36 @@ class Message(abc.ABC):
       return struct.pack('!I', payload_length) + payload_bytes
     return struct.pack('!IB', payload_length + 1, self.message_id) + payload_bytes
 
+  @staticmethod
+  def from_buffer(buffer):
+    length_prefix, = struct.unpack('!I', buffer[:4])
+    if length_prefix == 0:
+      message = KeepAliveMessage()
+      buffer = buffer[4:]
+      return message, buffer
+
+    message_id, = struct.unpack('!B', buffer[4:4 + 1])
+
+    # TODO: refactor using decorators
+    # TODO: check that the length correctly corresponds to the message id
+    try:
+      message_class = [
+        ChokeMessage,
+        UnchokeMessage,
+        InterestedMessage,
+        NotInterestedMessage,
+        HaveMessage,
+        BitfieldMessage,
+        RequestMessage,
+        PieceMessage,
+        CancelMessage,
+        PortMessage
+      ]
+      message, buffer = message_class[message_id].from_bytes(buffer)
+    except IndexError:
+      raise ValueError(f'Unknown message id {message_id}')
+    return message, buffer
+
   @classmethod
   def _payload_struct_format(cls, num_var_bytes=0):
     struct_format = '!'

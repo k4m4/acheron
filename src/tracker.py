@@ -40,3 +40,4 @@ class Tracker:
     logging.debug(f'Leechers: {self.leechers}')
 
     self.peers_info = response[b'peers']
+    logging.debug(f'Peers: {self.peers_info}')
