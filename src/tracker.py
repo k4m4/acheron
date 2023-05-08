@@ -3,6 +3,7 @@ import requests
 from pprint import pprint
 import logging
 import bencodepy
+import socket
 
 class Tracker:
   def __init__(self, torrent):
@@ -17,8 +18,7 @@ class Tracker:
       'uploaded': 0,
       'downloaded': 0,
       'left': self.torrent.length,
-      # TODO: handle compact mode
-      'compact': 0
+      'compact': 1
     }
     logging.info(f'Requesting from tracker {self.torrent.announce_url}')
     r = requests.get(self.torrent.announce_url, params=params)
@@ -39,5 +39,21 @@ class Tracker:
     logging.debug(f'Seeders: {self.seeders}')
     logging.debug(f'Leechers: {self.leechers}')
 
-    self.peers_info = response[b'peers']
+    if type(response[b'peers']) == list:
+      # dictionary model (non-compact response)
+      self.peers_info = response[b'peers']
+    else:
+      # binary model (compact response)
+      assert type(response[b'peers']) == bytes
+      assert len(response[b'peers']) % 6 == 0
+      self.peers_info = []
+      for i in range(0, len(response[b'peers']), 6):
+        ip = socket.inet_ntoa(response[b'peers'][i:i+4])
+        port, = struct.unpack('!H', response[b'peers'][i+4:i+6])
+        self.peers_info.append({
+          'ip': ip,
+          'port': port,
+          'peer_id': None
+        })
+
     logging.debug(f'Peers: {self.peers_info}')
