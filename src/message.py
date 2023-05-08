@@ -1,33 +1,102 @@
 import struct
 from pprint import pprint
+import abc
+import logging
 
 # TODO: use a proper buffer (https://docs.python.org/3/c-api/buffer.html#bufferobjects)
-class Message:
-  pass
+class Message(abc.ABC):
+  payload_struct = []
+  message_id = None
 
-class HandshakeMessage(Message):
-  def __init__(self, protocol_string, info_hash, peer_id):
-    self.protocol_string = protocol_string
-    self.info_hash = info_hash
-    self.peer_id = peer_id
+  def __init__(self, **kwargs):
+    assert len(kwargs) == len(self.payload_struct)
+    keys = [k for k, _ in self.payload_struct]
+    assert set(kwargs.keys()) == set(keys)
+    self.data = kwargs
 
   def to_bytes(self):
-    pstrlen = len(self.protocol_string)
+    payload_bytes = self._payload_to_bytes()
+    payload_length = len(payload_bytes)
+    if self.message_id is None:
+      return struct.pack('!I', payload_length) + payload_bytes
+    return struct.pack('!IB', payload_length + 1, self.message_id) + payload_bytes
+
+  @classmethod
+  def _payload_struct_format(cls, num_var_bytes=0):
+    struct_format = '!'
+    for k, v in cls.payload_struct:
+      if v == 'Xs':
+        struct_format += f'{num_var_bytes}s'
+      else:
+        struct_format += v
+    return struct_format
+
+  @classmethod
+  def _payload_num_const_bytes(cls):
+    return struct.calcsize(cls._payload_struct_format())
+
+  @classmethod
+  def _payload_num_var_bytes(cls, len_message_buffer):
+    return len_message_buffer - cls._payload_num_const_bytes()
+
+  @classmethod
+  def from_bytes(cls, buffer):
+    payload_length, message_id = struct.unpack_from('!IB', buffer)
+    assert message_id == cls.message_id
+    if payload_length - 1 > len(buffer):
+      raise ValueError(f'Not enough bytes to read {cls.__name__} payload')
+
+    message_buffer = buffer[4 + 1:4 + 1 + (payload_length - 1)]
+    buffer = buffer[4 + 1 + (payload_length - 1):]
+    data = cls._payload_from_bytes(message_buffer)
+    return cls(**data), buffer
+
+  @classmethod
+  def _payload_from_bytes(cls, message_buffer):
+    num_var_bytes = cls._payload_num_var_bytes(len(message_buffer))
+
+    data = struct.unpack_from(cls._payload_struct_format(num_var_bytes), message_buffer)
+    message_buffer[struct.calcsize(cls._payload_struct_format()):]
+
+    kwargs = {}
+    for v, (k, _) in zip(data, cls.payload_struct):
+      kwargs[k] = v
+    return kwargs
+
+  def _payload_to_bytes(self):
+    num_var_bytes = 0
+    for k, v in self.payload_struct:
+      if v == 'Xs':
+        num_var_bytes = len(self.data[k])
+
+    format = self._payload_struct_format(num_var_bytes)
+    return struct.pack(format, *self.data.values())
+
+  def __str__(self):
+    params = ', '.join(f'{k}={v}' for k, v in self.data.items())
+    return f"{type(self).__name__}({params})"
+
+class HandshakeMessage(Message):
+  payload_struct = [
+    ('protocol_string', 's'),
+    ('info_hash', '20s'),
+    ('peer_id', '20s')
+  ]
+
+  def to_bytes(self):
+    pstrlen = len(self.data['protocol_string'])
     reserved = 8 * b'\x00'
 
     packed = struct.pack(
-      f'!B{pstrlen}s{len(reserved)}s{len(self.info_hash)}s{len(self.peer_id)}s',
+      f'!B{pstrlen}s{len(reserved)}s{len(self.data["info_hash"])}s{len(self.data["peer_id"])}s',
       pstrlen,
-      self.protocol_string,
+      self.data['protocol_string'],
       reserved,
-      self.info_hash,
-      self.peer_id
+      self.data['info_hash'],
+      self.data['peer_id']
     )
 
     return packed
-
-  def __str__(self):
-    return f'HandshakeMessage(protocol_string={self.protocol_string}, info_hash={self.info_hash}, peer_id={self.peer_id})'
 
   @staticmethod
   def from_bytes(buffer):
@@ -36,21 +105,94 @@ class HandshakeMessage(Message):
     protocol_string, reserved, info_hash, peer_id = struct.unpack_from(unpack_format, buffer, offset=1)
     consumed_byte_cnt = 1 + struct.calcsize(unpack_format)
 
-    return HandshakeMessage(protocol_string, info_hash, peer_id), buffer[consumed_byte_cnt:]
+    return HandshakeMessage(
+      protocol_string=protocol_string,
+      info_hash=info_hash,
+      peer_id=peer_id
+    ), buffer[consumed_byte_cnt:]
+
+class KeepAliveMessage(Message):
+  pass
+
+class ChokeMessage(Message):
+  message_id = 0
+
+class UnchokeMessage(Message):
+  message_id = 1
+
+class InterestedMessage(Message):
+  message_id = 2
+
+class NotInterestedMessage(Message):
+  message_id = 3
+
+class HaveMessage(Message):
+  message_id = 4
+  payload_struct = [
+    ('piece_index', 'I')
+  ]
+
+class BitfieldMessage(Message):
+  message_id = 5
+  payload_struct = [
+    ('bitfield', 'Xs')
+  ]
+
+  @classmethod
+  def from_pieces(cls, pieces, num_pieces):
+    return BitfieldMessage(bitfield=cls._pieces_to_bitfield(pieces, num_pieces))
+
+  @classmethod
+  def _pieces_to_bitfield(self, pieces, num_pieces):
+    num_bytes = num_pieces // 8
+    if num_pieces % 8 != 0:
+      num_bytes += 1
+
+    bitfield = num_bytes * [0]
+    for piece in pieces:
+      i = piece // 8
+      j = piece % 8
+      bitfield[i] |= 1 << (7 - j)
+
+    return bytes(bitfield)
+
+  def __init__(self, bitfield):
+    super().__init__(bitfield=bitfield)
+    self.num_pieces = len(bitfield) * 8
+    self.pieces = set()
+    for i, byte in enumerate(bitfield):
+      for j in range(8):
+        if byte & (1 << (7 - j)):
+          self.pieces.add(i * 8 + j)
+
+    assert len(self.pieces) <= self.num_pieces
 
 class RequestMessage(Message):
-  def __init__(self, index, begin, length):
-    self.index = index
-    self.begin = begin
-    self.length = length
+  message_id = 6
+  payload_struct = [
+    ('index', 'I'),
+    ('begin', 'I'),
+    ('length', 'I')
+  ]
 
-  def to_bytes(self):
-    return struct.pack('!III', self.index, self.begin, self.length)
+class PieceMessage(Message):
+  message_id = 7
+  payload_struct = [
+    ('index', 'I'),
+    ('begin', 'I'),
+    ('block', 'Xs')
+  ]
 
-  def __str__(self):
-    return f'RequestMessage(index={self.index}, begin={self.begin}, length={self.length})'
+class CancelMessage(Message):
+  message_id = 8
+  payload_struct = [
+    ('index', 'I'),
+    ('begin', 'I'),
+    ('length', 'I')
+  ]
 
-  @staticmethod
-  def from_bytes(buffer):
-    index, begin, length = struct.unpack('!III', buffer)
-    return RequestMessage(index, begin, length)
+class PortMessage(Message):
+  message_id = 9
+  payload_struct = [
+    ('listen_port', 'H')
+  ]

@@ -4,6 +4,7 @@ from pprint import pprint
 from peer import Peer
 import logging
 from hashlib import sha1
+from math import ceil
 
 class Torrent:
   def __init__(self, client, bencoded_metadata):
@@ -20,7 +21,7 @@ class Torrent:
     self.piece_length = None
     self.pieces = None
 
-    self.__init_from_metadata(bencoded_metadata)
+    self._init_from_metadata(bencoded_metadata)
     self.client = client
     self.tracker = Tracker(self)
     self.have = set()
@@ -33,8 +34,9 @@ class Torrent:
       peer = Peer(self, peer_info)
       peer.connect()
       self.peers.append(peer)
+      return
 
-  def __init_from_metadata(self, bencoded_metadata):
+  def _init_from_metadata(self, bencoded_metadata):
     logging.debug('Parsing torrent metadata')
 
     decoded = bencodepy.decode(bencoded_metadata)
@@ -49,6 +51,9 @@ class Torrent:
       # TODO: custom exception here for file format errors
       raise Exception('Invalid pieces length')
     self.num_pieces = len(info[b'pieces']) // 20
+    piece_length = info[b'piece length']
+    # TODO: handle this gracefully
+    assert self.num_pieces == ceil(info[b'length'] / piece_length)
     self.info_hash = sha1(self.info_value).digest()
 
     logging.debug(f'Info hash is {self.info_hash.hex()}')

@@ -7,9 +7,9 @@ import bencodepy
 class Tracker:
   def __init__(self, torrent):
     self.torrent = torrent
-    self.__request()
+    self._request()
 
-  def __request(self):
+  def _request(self):
     params = {
       'info_hash': self.torrent.info_hash,
       'peer_id': self.torrent.client.peer_id,
@@ -17,6 +17,7 @@ class Tracker:
       'uploaded': 0,
       'downloaded': 0,
       'left': self.torrent.length,
+      # TODO: handle compact mode
       'compact': 0
     }
     logging.info(f'Requesting from tracker {self.torrent.announce_url}')
