@@ -5,6 +5,7 @@ from peer import Peer
 import logging
 from hashlib import sha1
 from math import ceil
+from peer_manager import PeerManager
 
 class Torrent:
   def __init__(self, client, bencoded_metadata):
@@ -28,29 +29,8 @@ class Torrent:
 
     logging.debug(f'Found {len(self.tracker.peers_info)} peers:')
 
-    self.peers = set()
-    for i, peer_info in enumerate(self.tracker.peers_info):
-      logging.debug(f'Peer {i}: {peer_info}')
-
-      this = self
-
-      class PeerPanicHandler:
-        def __init__(self):
-          self.peer = None
-
-        def update_peer(self, peer):
-          self.peer = peer
-
-        def handle_panic(self, reason):
-          this.peers.remove(self.peer)
-
-      panic_handler = PeerPanicHandler()
-
-      peer = Peer(self, peer_info, panic_handler.handle_panic)
-      panic_handler.update_peer(peer)
-      peer.connect()
-      self.peers.add(peer)
-      return
+    self.peer_manager = PeerManager(self, self.tracker.peers_info)
+    self.peer_manager.connect()
 
   def _init_from_metadata(self, bencoded_metadata):
     logging.debug('Parsing torrent metadata')

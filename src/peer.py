@@ -38,7 +38,7 @@ class Peer:
       self.ip = peer_info[b'ip'].decode('utf-8')
       self.port = peer_info[b'port']
     self.peer_id = peer_info[b'peer id']
-    self.connected = False
+    self.is_connected = False
 
     self.am_choking = True
     self.peer_choking = True
@@ -69,9 +69,17 @@ class Peer:
     self.socket = socket.socket(protocol, socket.SOCK_STREAM)
 
     self._debug(f'Connecting to {self.ip}:{self.port}')
-    # TODO: handle error
-    self.socket.connect((self.ip, self.port))
-    self.connected = True
+
+    try:
+      self.socket.connect((self.ip, self.port))
+    except ConnectionRefusedError:
+      self.panic('Connection refused')
+      return
+    except TimeoutError:
+      self.panic('Connection timed out')
+      return
+
+    self.is_connected = True
     self._debug(f'Connected')
     self._send_handshake()
     self._make_interested(True)
@@ -83,8 +91,8 @@ class Peer:
       # blocking
       try:
         buffer += self.socket.recv(4096)
-      except ConnectionResetError:
-        self.panic('Remote peer closed connection while receiving')
+      except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+        self.panic('Connection with remote peer failed while receiving data')
         return
 
       # self._debug(f'Received {len(buffer)} bytes')
@@ -304,7 +312,7 @@ class Peer:
   def panic(self, reason):
     self.socket.close()
     self._warn(f'Peer panic: {reason}')
-    self.connected = False
+    self.is_connected = False
     if self.panic_callback is not None:
       self.panic_callback(reason)
 
