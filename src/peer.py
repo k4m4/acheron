@@ -8,7 +8,7 @@ from math import ceil
 from piece import Piece
 
 PROTOCOL_STRING = b'BitTorrent protocol'
-TEST_WITH_LOCAL_PEER = False
+TEST_WITH_LOCAL_PEER = True
 BLOCK_LENGTH = 16 * 1024
 
 class ProtocolException(Exception):
@@ -186,10 +186,41 @@ class Peer:
     for piece in bitfield_message.pieces:
       self._mark_has(piece)
 
+    percentage_peer_has = round((len(self.has) / self.torrent.num_pieces) * 100)
+    self._info(f'Peer has {percentage_peer_has}% of pieces')
+
   @dispatcher(RequestMessage)
   def _on_request(self, request_message):
-    self._ensure_piece_index_in_range(request_message.data['index'])
-    # TODO: respond to request
+    index = request_message.data['index']
+    begin = request_message.data['begin']
+    length = request_message.data['length']
+    self._ensure_piece_index_in_range(index)
+
+    if self.am_choking:
+      self._debug(f'Peer requested piece while choked')
+      return
+
+    if not self.peer_interested:
+      self._debug(f'Peer requested piece while not interested')
+      return
+    
+    if index not in self.torrent.have:
+      self._debug(f'Peer requested piece that we do not have')
+      return
+
+    if index < self.torrent.num_pieces - 1:
+      current_piece_length = self.torrent.piece_length
+    else:
+      current_piece_length = self.torrent.length % self.torrent.piece_length
+      if current_piece_length == 0:
+        current_piece_length = self.torrent.piece_length
+
+    if not begin + length <= current_piece_length:
+      self._debug(f'Peer requested piece with invalid length')
+      return
+
+    data = self.torrent.read_piece_from_disk(index)[begin:begin+length]
+    self._send_piece(PieceMessage(index=index, begin=begin, block=data))
 
   @dispatcher(PieceMessage)
   def _on_piece(self, piece_message):
@@ -325,6 +356,9 @@ class Peer:
   def _send_request(self, request_message):
     self._send_message(request_message)
 
+  def _send_piece(self, piece_message):
+    self._send_message(piece_message)
+
   def _send_message(self, message):
     self._debug(f'Sending message of type {type(message).__name__}')
     self.socket.send(message.to_bytes())
@@ -334,6 +368,9 @@ class Peer:
 
   def _debug(self, msg):
     logging.debug(f'[{self._identifier()}] {msg}')
+
+  def _info(self, msg):
+    logging.info(f'[{self._identifier()}] {msg}')
 
   def _identifier(self):
     return f'{self.human_peer_id if self.human_peer_id is not None else self.peer_id} ({self.ip})'

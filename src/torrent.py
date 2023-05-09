@@ -65,12 +65,12 @@ class Torrent:
         'have': list(self.have)
       }))
   
-  def _read_meta_file(self):
+  def read_meta_file(self):
     with open(self.meta_file, 'r') as f:
       # TODO: handle parse/read error
       self.have = set(json.loads(f.read())['have'])
 
-  def _read_piece_from_disk(self, index):
+  def read_piece_from_disk(self, index):
     assert 0 <= index < self.num_pieces
     assert index in self.have
     with open(self.data_file, 'rb') as f:
