@@ -103,7 +103,7 @@ class Message(abc.ABC):
     return struct.pack(format, *self.data.values())
 
   def __str__(self):
-    params = ', '.join(f'{k}={v}' for k, v in self.data.items())
+    params = ', '.join(f'{k}={str(v)[:50] + "..." if len(str(v)) > 50 else v}' for k, v in self.data.items())
     return f"{type(self).__name__}({params})"
 
 class HandshakeMessage(Message):
