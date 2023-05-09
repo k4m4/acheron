@@ -1,4 +1,5 @@
 import bencodepy
+from pathlib import Path
 from tracker import Tracker
 from pprint import pprint
 from peer import Peer
@@ -6,6 +7,8 @@ import logging
 from hashlib import sha1
 from math import ceil
 from peer_manager import PeerManager
+import json
+import os
 
 class Torrent:
   def __init__(self, client, bencoded_metadata):
@@ -21,16 +24,58 @@ class Torrent:
     self.name = None
     self.piece_length = None
     self.pieces = None
+    self.data_file = None
+    self.meta_file = None
 
     self._init_from_metadata(bencoded_metadata)
+    self._init_data_file()
+    self._init_meta_file()
     self.client = client
     self.tracker = Tracker(self)
     self.have = set()
 
     logging.debug(f'Found {len(self.tracker.peers_info)} peers:')
 
-    self.peer_manager = PeerManager(self, self.tracker.peers_info)
+    self.peer_manager = PeerManager(self, self.tracker.peers_info, self._on_piece_download)
     self.peer_manager.connect()
+
+  def _init_data_file(self):
+    self.data_file = "downloads/ubuntu.iso"
+    os.makedirs(os.path.dirname(self.data_file), exist_ok=True)
+    Path(self.data_file).touch()
+
+  def _init_meta_file(self):
+    self.meta_file = "downloads/ubuntu.metadata"
+    os.makedirs(os.path.dirname(self.meta_file), exist_ok=True)
+    Path(self.meta_file).touch()
+
+  def _on_piece_download(self, index, data):
+    self._write_piece_to_disk(index, data)
+    self.have.add(index)
+    self._write_meta_file()
+
+  def _write_piece_to_disk(self, index, data):
+    with open(self.data_file, 'wb') as f:
+      f.seek(index * self.piece_length)
+      f.write(data)
+  
+  def _write_meta_file(self):
+    with open(self.meta_file, 'w') as f:
+      f.write(json.dumps({
+        'have': list(self.have)
+      }))
+  
+  def _read_meta_file(self):
+    with open(self.meta_file, 'r') as f:
+      # TODO: handle parse/read error
+      self.have = set(json.loads(f.read())['have'])
+
+  def _read_piece_from_disk(self, index):
+    assert 0 <= index < self.num_pieces
+    assert index in self.have
+    with open(self.data_file, 'rb') as f:
+      f.seek(index * self.piece_length)
+      return f.read(self.piece_length)
 
   def get_piece_hash(self, index):
     return self.piece_hashes[index]

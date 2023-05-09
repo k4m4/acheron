@@ -5,7 +5,7 @@ from peer import Peer
 MAX_ACTIVE_CONNECTIONS = 1
 
 class PeerManager:
-  def __init__(self, torrent, peers_info):
+  def __init__(self, torrent, peers_info, on_piece_download=None):
     self.torrent = torrent
     self.peers = set()
 
@@ -27,7 +27,7 @@ class PeerManager:
 
       panic_handler = PeerPanicHandler()
 
-      peer = Peer(torrent, peer_info, panic_handler.handle_panic)
+      peer = Peer(torrent, peer_info, panic_handler.handle_panic, on_piece_download)
       panic_handler.update_peer(peer)
       self.peers.add(peer)
 

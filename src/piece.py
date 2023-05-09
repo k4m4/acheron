@@ -32,4 +32,4 @@ class Piece:
           return
       if self.on_completed:
         logging.debug(f'Piece {self.index} completed with hash {self.hash.hex()}')
-        self.on_completed()
+        self.on_completed(self.data)

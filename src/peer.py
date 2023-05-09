@@ -29,8 +29,9 @@ def dispatcher(message_class):
   return decorator
 
 class Peer:
-  def __init__(self, torrent, peer_info, panic_callback=None):
-    self.panic_callback = panic_callback
+  def __init__(self, torrent, peer_info, on_panic=None, on_piece_download=None):
+    self.on_panic = on_panic
+    self.on_piece_download = on_piece_download
     self.torrent = torrent
 
     if TEST_WITH_LOCAL_PEER:
@@ -196,9 +197,12 @@ class Peer:
 
     piece_index = piece_message.data['index']
     if piece_index not in self.pending_pieces:
-      def on_completed():
+      def on_completed(piece_data):
         self._debug(f'Piece {piece_index} completed')
         del self.pending_pieces[piece_index]
+        # TODO: rename to piece_download_handler
+        if self.on_piece_download:
+          self.on_piece_download(piece_index, piece_data)
 
       def on_error(reason):
         self.panic(f'Piece {piece_index} failed: {reason}')
@@ -338,8 +342,8 @@ class Peer:
     self.socket.close()
     self._warn(f'Peer panic: {reason}')
     self.is_connected = False
-    if self.panic_callback:
-      self.panic_callback(reason)
+    if self.on_panic:
+      self.on_panic(reason)
 
   def __str__(self):
     return f'Peer {self._identifier()}'

@@ -46,7 +46,7 @@ class Tracker:
         {
           'ip': peer[b'ip'].decode('utf-8'),
           'port': peer[b'port'],
-          'peer id': peer[b'peer id'].decode('utf-8')
+          'peer id': peer[b'peer id']
         }
         for peer in response[b'peers']
       ]
