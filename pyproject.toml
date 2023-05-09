@@ -11,6 +11,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.11"
 requests = "^2.30.0"
+bencodepy = "^0.9.5"
 
 
 [tool.poetry.group.dev.dependencies]
