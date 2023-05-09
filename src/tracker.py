@@ -4,6 +4,7 @@ from pprint import pprint
 import logging
 import bencodepy
 import socket
+import struct
 
 class Tracker:
   def __init__(self, torrent):
@@ -41,7 +42,14 @@ class Tracker:
 
     if type(response[b'peers']) == list:
       # dictionary model (non-compact response)
-      self.peers_info = response[b'peers']
+      self.peers_info = [
+        {
+          'ip': peer[b'ip'].decode('utf-8'),
+          'port': peer[b'port'],
+          'peer id': peer[b'peer id'].decode('utf-8')
+        }
+        for peer in response[b'peers']
+      ]
     else:
       # binary model (compact response)
       assert type(response[b'peers']) == bytes
@@ -53,7 +61,7 @@ class Tracker:
         self.peers_info.append({
           'ip': ip,
           'port': port,
-          'peer_id': None
+          'peer id': None
         })
 
     logging.debug(f'Peers: {self.peers_info}')

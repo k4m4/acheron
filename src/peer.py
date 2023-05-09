@@ -32,13 +32,14 @@ class Peer:
   def __init__(self, torrent, peer_info, panic_callback=None):
     self.panic_callback = panic_callback
     self.torrent = torrent
+
     if TEST_WITH_LOCAL_PEER:
       self.ip = '127.0.0.1'
       self.port = 6881
     else:
-      self.ip = peer_info[b'ip'].decode('utf-8')
-      self.port = peer_info[b'port']
-    self.peer_id = peer_info[b'peer id']
+      self.ip = peer_info['ip']
+      self.port = peer_info['port']
+    self.peer_id = peer_info['peer id']
     self.is_connected = False
 
     self.am_choking = True
@@ -257,12 +258,15 @@ class Peer:
         if 'error' in match:
           self._close_with_error(f"{match['error']}: expected {match['expected']}, got {match['actual']}")
         else:
+          if self.peer_id is None:
+            # Tracker compact mode means we don't know the peer_id yet
+            continue
           # It is possible that the peer_id reported by the tracker
           # does not match the peer_id reported by the peer itself.
           # This is due to e.g., Azureus "anonymity" option
           # See: https://wiki.theory.org/BitTorrentSpecification#Handshake
           self._warn(f"{match['warn']}: expected {match['expected']}, got {match['actual']}")
-    self.human_peer_id = peer_id_to_human_peer_id(self.peer_id)
+    self.human_peer_id = peer_id_to_human_peer_id(handshake_message.data['peer_id'])
 
     # TODO: show reserved bits
     self._debug(f'Remote peer is running {self.human_peer_id}')
