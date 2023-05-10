@@ -1,4 +1,3 @@
-import socket
 import logging
 import struct
 from version import peer_id_to_human_peer_id
@@ -6,6 +5,7 @@ from pprint import pprint
 from message import *
 from math import ceil
 from piece import Piece
+from connection import Connection
 
 PROTOCOL_STRING = b'BitTorrent protocol'
 TEST_WITH_LOCAL_PEER = False
@@ -28,20 +28,20 @@ def dispatcher(message_class):
     return wrapper
   return decorator
 
-class Peer:
-  def __init__(self, torrent, peer_info, on_panic=None, on_piece_download=None):
-    self.on_panic = on_panic
-    self.on_piece_download = on_piece_download
+class Peer(Connection):
+  def __init__(self, torrent, peer_info, panic_handler=None, piece_download_handler=None):
+    self.panic_handler = panic_handler
+    self.piece_download_handler = piece_download_handler
     self.torrent = torrent
 
     if TEST_WITH_LOCAL_PEER:
-      self.ip = '127.0.0.1'
-      self.port = 6881
+      ip = '127.0.0.1'
+      port = 6881
     else:
-      self.ip = peer_info['ip']
-      self.port = peer_info['port']
+      ip = peer_info['ip']
+      port = peer_info['port']
     self.peer_id = peer_info['peer id']
-    self.is_connected = False
+    super().__init__(ip, port)
 
     self.am_choking = True
     self.peer_choking = True
@@ -53,69 +53,17 @@ class Peer:
     self.human_peer_id = None
     self.has = set()
 
-    self.socket = None
     self.pending_pieces = {} # piece index => Piece()
 
     self._debug(f'Creating peer')
 
-  def connect(self):
-    try:
-      socket.inet_pton(socket.AF_INET6, self.ip)
-      protocol = socket.AF_INET6
-    except socket.error:
-      try:
-        socket.inet_pton(socket.AF_INET, self.ip)
-        protocol = socket.AF_INET
-      except socket.error:
-        self._warn(f'Invalid IP address: {self.ip}')
-        return
-
-    self.socket = socket.socket(protocol, socket.SOCK_STREAM)
-
-    self._debug(f'Connecting to {self.ip}:{self.port}')
-
-    try:
-      self.socket.connect((self.ip, self.port))
-    except ConnectionRefusedError:
-      self.panic('Connection refused')
-      return
-    except TimeoutError:
-      self.panic('Connection timed out')
-      return
-
-    self.is_connected = True
+  def on_connect(self):
     self._debug(f'Connected')
     self._send_handshake()
     self._make_interested(True)
     self._main_loop()
 
-  def _main_loop(self):
-    buffer = b''
-    while True:
-      # blocking
-      try:
-        buffer += self.socket.recv(4096)
-      except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-        self.panic('Connection with remote peer failed while receiving data')
-        return
-
-      # self._debug(f'Received {len(buffer)} bytes')
-      if not buffer:
-        continue
-      while True:
-        old_buffer_len = len(buffer)
-        try:
-          buffer = self._on_data(buffer)
-          if not buffer:
-            # we consumed everything -- no need to keep processing current buffer
-            break
-          if len(buffer) == old_buffer_len:
-            # we consumed nothing -- no need to keep processing current buffer
-            break
-        except (struct.error, ValueError) as e:
-          self._debug(f'Partial data received: {e}')
-
-  def _on_data(self, buffer):
+  def on_data(self, buffer):
     if not self.handshook:
       try:
         handshake_message, buffer = HandshakeMessage.from_bytes(buffer)
@@ -129,7 +77,7 @@ class Peer:
     message = None
     try:
       message, buffer = Message.from_buffer(buffer)
-    except ValueError as e:
+    except (ValueError, struct.error) as e:
       # We may not have enough data to parse the full message yet
       # self._debug(e)
       return buffer
@@ -232,9 +180,8 @@ class Peer:
       def on_completed(piece_data):
         self._debug(f'Piece {piece_index} completed')
         del self.pending_pieces[piece_index]
-        # TODO: rename to piece_download_handler
-        if self.on_piece_download:
-          self.on_piece_download(piece_index, piece_data)
+        if self.piece_download_handler:
+          self.piece_download_handler(piece_index, piece_data)
 
       def on_error(reason):
         self.panic(f'Piece {piece_index} failed: {reason}')
@@ -346,24 +293,12 @@ class Peer:
     self._debug(f'Sending message of type {type(message).__name__}')
     self.socket.send(message.to_bytes())
 
-  def _warn(self, msg):
-    logging.warn(f'[{self._identifier()}] {msg}')
-
-  def _debug(self, msg):
-    logging.debug(f'[{self._identifier()}] {msg}')
-
-  def _info(self, msg):
-    logging.info(f'[{self._identifier()}] {msg}')
+  def on_panic(self, reason):
+    if self.panic_handler:
+      self.panic_handler(reason)
 
   def _identifier(self):
     return f'{self.human_peer_id if self.human_peer_id is not None else self.peer_id} ({self.ip})'
-
-  def panic(self, reason):
-    self.socket.close()
-    self._warn(f'Peer panic: {reason}')
-    self.is_connected = False
-    if self.on_panic:
-      self.on_panic(reason)
 
   def __str__(self):
     return f'Peer {self._identifier()}'
