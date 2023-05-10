@@ -6,6 +6,7 @@ from message import *
 from math import ceil
 from piece import Piece
 from connection import Connection
+from event_emitter import EventEmitter
 
 PROTOCOL_STRING = b'BitTorrent protocol'
 TEST_WITH_LOCAL_PEER = False
@@ -28,10 +29,8 @@ def dispatcher(message_class):
     return wrapper
   return decorator
 
-class Peer(Connection):
-  def __init__(self, torrent, peer_info, panic_handler=None, piece_download_handler=None):
-    self.panic_handler = panic_handler
-    self.piece_download_handler = piece_download_handler
+class Peer(Connection, EventEmitter):
+  def __init__(self, torrent, peer_info):
     self.torrent = torrent
 
     if TEST_WITH_LOCAL_PEER:
@@ -99,7 +98,7 @@ class Peer(Connection):
   @dispatcher(UnchokeMessage)
   def _on_unchoke(self, _):
     self.peer_choking = False
-    self.request_piece(0)
+    self.on('available')
 
   @dispatcher(InterestedMessage)
   def _on_interested(self, _):
@@ -180,8 +179,7 @@ class Peer(Connection):
       def on_completed(piece_data):
         self._debug(f'Piece {piece_index} completed')
         del self.pending_pieces[piece_index]
-        if self.piece_download_handler:
-          self.piece_download_handler(piece_index, piece_data)
+        self.on('piece_download', piece_index, piece_data)
 
       def on_error(reason):
         self.panic(f'Piece {piece_index} failed: {reason}')
@@ -197,6 +195,10 @@ class Peer(Connection):
       )
     piece = self.pending_pieces[piece_index]
     piece.on_block_arrival(piece_message.data['begin'], piece_message.data['block'])
+
+  def schedule_piece_download(self, index):
+    # TODO: make this a queue
+    self.request_piece(index)
 
   def request_piece(self, piece_index):
     self._ensure_piece_index_in_range(piece_index)
@@ -294,8 +296,7 @@ class Peer(Connection):
     self.socket.send(message.to_bytes())
 
   def on_panic(self, reason):
-    if self.panic_handler:
-      self.panic_handler(reason)
+    self.on('panic', reason)
 
   def _identifier(self):
     return f'{self.human_peer_id if self.human_peer_id is not None else self.peer_id} ({self.ip})'

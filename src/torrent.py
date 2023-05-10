@@ -39,6 +39,9 @@ class Torrent:
     self.peer_manager = PeerManager(self, self.tracker.peers_info, self._on_piece_download)
     self.peer_manager.connect()
 
+  def _get_next_piece_to_download(self):
+    return 0
+
   def _init_data_file(self):
     self.data_file = "downloads/ubuntu.iso"
     os.makedirs(os.path.dirname(self.data_file), exist_ok=True)
@@ -58,13 +61,13 @@ class Torrent:
     with open(self.data_file, 'wb') as f:
       f.seek(index * self.piece_length)
       f.write(data)
-  
+
   def _write_meta_file(self):
     with open(self.meta_file, 'w') as f:
       f.write(json.dumps({
         'have': list(self.have)
       }))
-  
+
   def read_meta_file(self):
     with open(self.meta_file, 'r') as f:
       # TODO: handle parse/read error

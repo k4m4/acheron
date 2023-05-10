@@ -4,6 +4,13 @@ from peer import Peer
 
 MAX_ACTIVE_CONNECTIONS = 1
 
+def capture(*args1, **kwargs1):
+  def decorator(fn):
+    def wrapper(*args2, **kwargs2):
+      return fn(*[*args1, *args2], **{**kwargs1, **kwargs2})
+    return wrapper
+  return decorator
+
 class PeerManager:
   def __init__(self, torrent, peers_info, on_piece_download=None):
     self.torrent = torrent
@@ -14,20 +21,21 @@ class PeerManager:
 
       this = self
 
-      class PeerPanicHandler:
-        def __init__(self):
-          self.peer = None
+      peer = Peer(torrent, peer_info)
 
-        def update_peer(self, peer):
-          self.peer = peer
+      @capture(peer=peer)
+      def on_panic(peer, reason):
+        this.peers.remove(peer)
+        this.connect_to_new_peer()
 
-        def handle_panic(self, reason):
-          this.peers.remove(self.peer)
-          this.connect_to_new_peer()
+      @capture(peer=peer)
+      def on_available(peer):
+        logging.debug(f'Peer {peer} is available')
 
-      panic_handler = PeerPanicHandler()
+      peer.on('panic', on_panic)
+      peer.on('piece_download', on_piece_download)
+      peer.on('available', on_available)
 
-      peer = Peer(torrent, peer_info, panic_handler.handle_panic, on_piece_download)
       panic_handler.update_peer(peer)
       self.peers.add(peer)
 
