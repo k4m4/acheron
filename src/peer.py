@@ -8,7 +8,7 @@ from math import ceil
 from piece import Piece
 
 PROTOCOL_STRING = b'BitTorrent protocol'
-TEST_WITH_LOCAL_PEER = True
+TEST_WITH_LOCAL_PEER = False
 BLOCK_LENGTH = 16 * 1024
 
 class ProtocolException(Exception):
@@ -130,7 +130,8 @@ class Peer:
     try:
       message, buffer = Message.from_buffer(buffer)
     except ValueError as e:
-      self._warn(e)
+      # We may not have enough data to parse the full message yet
+      # self._debug(e)
       return buffer
 
     self._on_message(message)
@@ -203,7 +204,7 @@ class Peer:
     if not self.peer_interested:
       self._debug(f'Peer requested piece while not interested')
       return
-    
+
     if index not in self.torrent.have:
       self._debug(f'Peer requested piece that we do not have')
       return
@@ -220,7 +221,7 @@ class Peer:
       return
 
     data = self.torrent.read_piece_from_disk(index)[begin:begin+length]
-    self._send_piece(PieceMessage(index=index, begin=begin, block=data))
+    self._send(PieceMessage(index=index, begin=begin, block=data))
 
   @dispatcher(PieceMessage)
   def _on_piece(self, piece_message):
@@ -254,7 +255,7 @@ class Peer:
     self._ensure_piece_index_in_range(piece_index)
 
     for i in range(0, self.torrent.piece_length, BLOCK_LENGTH):
-      self._send_request(RequestMessage(index=piece_index, begin=i, length=BLOCK_LENGTH))
+      self._send(RequestMessage(index=piece_index, begin=i, length=BLOCK_LENGTH))
 
   @dispatcher(CancelMessage)
   def _on_cancel(self, cancel_message):
@@ -319,7 +320,7 @@ class Peer:
       peer_id=self.torrent.client.peer_id
     )
 
-    self._send_message(handshake_message)
+    self._send(handshake_message)
 
   def _make_interested(self, am_interested=True):
     self._debug(f'Changing interested flag to {am_interested}')
@@ -327,9 +328,9 @@ class Peer:
       return
     self.am_interested = am_interested
     if am_interested:
-      self._send_interested()
+      self._send(InterestedMessage())
     else:
-      self._send_not_interested()
+      self._send(NotInterestedMessage())
 
   def _make_choking(self, am_choking=True):
     self._debug(f'Changing choking flag to {am_choked}')
@@ -337,29 +338,11 @@ class Peer:
       return
     self.am_choking = am_choking
     if am_choked:
-      self._send_choke()
+      self._send(ChokeMessage())
     else:
-      self._send_unchoke()
+      self._send(UnchokeMessage())
 
-  def _send_choke(self, choke_message=ChokeMessage()):
-    self._send_message(choke_message)
-
-  def _send_unchoke(self, unchoke_message=UnchokeMessage()):
-    self._send_message(unchoke_message)
-
-  def _send_interested(self, interested_message=InterestedMessage()):
-    self._send_message(interested_message)
-
-  def _send_not_interested(self, not_interested_message=NotInterestedMessage()):
-    self._send_message(not_interested_message)
-
-  def _send_request(self, request_message):
-    self._send_message(request_message)
-
-  def _send_piece(self, piece_message):
-    self._send_message(piece_message)
-
-  def _send_message(self, message):
+  def _send(self, message):
     self._debug(f'Sending message of type {type(message).__name__}')
     self.socket.send(message.to_bytes())
 
