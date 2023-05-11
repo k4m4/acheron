@@ -21,8 +21,8 @@ dispatch_handlers = {}
 
 def dispatcher(message_class):
   def decorator(method):
-    def wrapper(self, message):
-      method(self, message)
+    async def wrapper(self, message):
+      await method(self, message)
 
     if message_class not in dispatch_handlers:
       dispatch_handlers[message_class] = []
@@ -61,17 +61,17 @@ class Peer(Connection, EventEmitter):
 
     self._debug(f'Creating peer')
 
-  def on_connect(self):
+  async def on_connect(self):
     self._debug(f'Connected')
-    self._send_handshake()
-    self.emit('connect')
+    await self._send_handshake()
+    await self.emit('connect')
     # TODO: send bitfield
 
-  def on_data(self, buffer):
+  async def on_data(self, buffer):
     if not self.handshook:
       try:
         handshake_message, buffer = HandshakeMessage.from_bytes(buffer)
-        self._on_handshake(handshake_message)
+        await self._on_handshake(handshake_message)
       except struct.error:
         # Handshake does not yet have enough bytes to complete
         return buffer
@@ -86,35 +86,35 @@ class Peer(Connection, EventEmitter):
       # self._debug(e)
       return buffer
 
-    self._on_message(message)
+    await self._on_message(message)
     self.received_non_handshake_message = True
     return buffer
 
-  def _on_message(self, message):
+  async def _on_message(self, message):
     self._debug(f'<- {message}')
 
     for dispatcher in dispatch_handlers[type(message)]:
-      dispatcher(self, message)
+      await dispatcher(self, message)
 
   @dispatcher(ChokeMessage)
-  def _on_choke(self, _):
+  async def _on_choke(self, _):
     self.peer_choking = True
 
   @dispatcher(UnchokeMessage)
-  def _on_unchoke(self, _):
+  async def _on_unchoke(self, _):
     self.peer_choking = False
-    self.emit('available')
+    await self.emit('available')
 
   @dispatcher(InterestedMessage)
-  def _on_interested(self, _):
+  async def _on_interested(self, _):
     self.peer_interested = True
 
   @dispatcher(NotInterestedMessage)
-  def _on_not_interested(self, _):
+  async def _on_not_interested(self, _):
     self.peer_interested = False
 
   @dispatcher(HaveMessage)
-  def _on_have(self, have_message):
+  async def _on_have(self, have_message):
     self._mark_has(have_message.data['piece_index'])
 
   def _ensure_piece_index_in_range(self, piece_index):
@@ -127,7 +127,7 @@ class Peer(Connection, EventEmitter):
     self.has.add(piece_index)
 
   @dispatcher(BitfieldMessage)
-  def _on_bitfield(self, bitfield_message):
+  async def _on_bitfield(self, bitfield_message):
     if self.received_non_handshake_message:
       self.panic(f'Bitfield message was not received immediately after handshake')
       return
@@ -143,7 +143,7 @@ class Peer(Connection, EventEmitter):
     self._info(f'Peer has {percentage_peer_has}% of pieces')
 
   @dispatcher(RequestMessage)
-  def _on_request(self, request_message):
+  async def _on_request(self, request_message):
     index = request_message.data['index']
     begin = request_message.data['begin']
     length = request_message.data['length']
@@ -173,20 +173,20 @@ class Peer(Connection, EventEmitter):
       return
 
     data = self.torrent.read_piece(index)[begin:begin+length]
-    self._send(PieceMessage(index=index, begin=begin, block=data))
+    await self._send(PieceMessage(index=index, begin=begin, block=data))
 
   # This message represents the data of a single block within the piece,
   # not a whole piece
   @dispatcher(PieceMessage)
-  def _on_piece(self, piece_message):
+  async def _on_piece(self, piece_message):
     self._ensure_piece_index_in_range(piece_message.data['index'])
 
     piece_index = piece_message.data['index']
 
     piece = self.pending_pieces[piece_index]
-    piece.on_block_arrival(piece_message.data['begin'], piece_message.data['block'])
+    await piece.on_block_arrival(piece_message.data['begin'], piece_message.data['block'])
 
-  def schedule_piece_download(self, piece_index):
+  async def schedule_piece_download(self, piece_index):
     assert piece_index not in self.pending_pieces
 
     self.pending_pieces[piece_index] = Piece(
@@ -197,55 +197,55 @@ class Peer(Connection, EventEmitter):
       BLOCK_LENGTH
     )
 
-    def on_completed(piece_data):
+    async def on_completed(piece_data):
       self._debug(f'Piece {piece_index} completed')
       del self.pending_pieces[piece_index]
-      self.emit('piece_downloaded', piece_index, piece_data)
-      self.emit('available')
+      await self.emit('piece_downloaded', piece_index, piece_data)
+      await self.emit('available')
 
-    def on_piece_error(reason):
+    async def on_piece_error(reason):
       self._warning(f'Piece {piece_index} failed: {reason}')
-      self.request_piece(piece_index)
+      await self.request_piece(piece_index)
 
-    def on_block_error(block_index, reason):
+    async def on_block_error(block_index, reason):
       self._warning(f'Block of piece {piece_index} failed: {reason}; re-requesting block')
-      self.request_block(piece_index, block_index)
+      await self.request_block(piece_index, block_index)
 
     self.pending_pieces[piece_index].on('completed', on_completed)
     self.pending_pieces[piece_index].on('piece_error', on_piece_error)
     self.pending_pieces[piece_index].on('block_error', on_block_error)
 
-    self.request_piece(piece_index)
+    await self.request_piece(piece_index)
 
     if len(self.pending_pieces) < NUM_PARALLEL_PIECE_REQUESTS_PER_PEER:
-      self.emit('available')
+      await self.emit('available')
 
-  def request_block(self, piece_index, block_index):
+  async def request_block(self, piece_index, block_index):
     # self._debug(f'Requesting block {block_index} of piece {piece_index}')
     # TODO: handle last block of last piece
-    self._send(RequestMessage(index=piece_index, begin=block_index*BLOCK_LENGTH, length=BLOCK_LENGTH))
+    await self._send(RequestMessage(index=piece_index, begin=block_index*BLOCK_LENGTH, length=BLOCK_LENGTH))
 
-  def request_piece(self, piece_index):
+  async def request_piece(self, piece_index):
     # self._debug(f'Requesting piece {piece_index}')
     self._ensure_piece_index_in_range(piece_index)
 
     for block_index in range(self.torrent.piece_length // BLOCK_LENGTH):
-      self.request_block(piece_index, block_index)
+      await self.request_block(piece_index, block_index)
 
   @dispatcher(CancelMessage)
-  def _on_cancel(self, cancel_message):
+  async def _on_cancel(self, cancel_message):
     self._ensure_piece_index_in_range(cancel_message.data['index'])
 
   @dispatcher(PortMessage)
-  def _on_port(self, port_message):
+  async def _on_port(self, port_message):
     pass
 
   @dispatcher(KeepAliveMessage)
-  def _on_keep_alive(self, keep_alive_message):
+  async def _on_keep_alive(self, keep_alive_message):
     pass
 
   @dispatcher(HandshakeMessage)
-  def _on_handshake(self, handshake_message):
+  async def _on_handshake(self, handshake_message):
     self._debug(f"Remote client is using protocol {handshake_message.data['protocol_string']}")
     matches = [
       {
@@ -282,12 +282,12 @@ class Peer(Connection, EventEmitter):
     # TODO: show reserved bits
     self._debug(f'Remote peer is running {self.human_peer_id}')
 
-  def _close_with_error(self, msg):
+  async def _close_with_error(self, msg):
     self._warning(msg)
-    self.socket.close()
+    await self.close()
     raise ProtocolException(msg)
 
-  def _send_handshake(self):
+  async def _send_handshake(self):
     self._debug(f'Sending handshake')
     handshake_message = HandshakeMessage(
       protocol_string=PROTOCOL_STRING,
@@ -295,31 +295,31 @@ class Peer(Connection, EventEmitter):
       peer_id=self.torrent.client.peer_id
     )
 
-    self._send(handshake_message)
+    await self._send(handshake_message)
 
-  def make_interested(self, am_interested=True):
+  async def make_interested(self, am_interested=True):
     self._debug(f'Changing interested flag to {am_interested}')
     if am_interested == self.am_interested:
       return
     self.am_interested = am_interested
     if am_interested:
-      self._send(InterestedMessage())
+      await self._send(InterestedMessage())
     else:
-      self._send(NotInterestedMessage())
+      await self._send(NotInterestedMessage())
 
-  def _make_choking(self, am_choking=True):
+  async def _make_choking(self, am_choking=True):
     self._debug(f'Changing choking flag to {am_choked}')
     if am_choking == self.am_choking:
       return
     self.am_choking = am_choking
     if am_choked:
-      self._send(ChokeMessage())
+      await self._send(ChokeMessage())
     else:
-      self._send(UnchokeMessage())
+      await self._send(UnchokeMessage())
 
-  def _send(self, message):
+  async def _send(self, message):
     self._debug(f'-> {message}')
-    self.socket.send(message.to_bytes())
+    await self.send_data(message.to_bytes())
 
   def on_panic(self, reason):
     self.on('panic', reason)

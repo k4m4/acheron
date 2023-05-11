@@ -15,25 +15,25 @@ class Piece(EventEmitter):
     self.data = bytearray(size)
     self.blocks_received = set()
 
-  def on_block_arrival(self, begin, block):
+  async def on_block_arrival(self, begin, block):
     self.data[begin:begin+len(block)] = block
     block_index = begin // self.block_length
     if len(block) > self.block_length:
-      logging.warning(f'Piece {self.index} received block of length {len(block)} > {self.block_length}')
-      self.emit('block_error', 'Block too long')
+      logging.warning(f'Piece {self.index} received block of length {len(block)} > {self.block_length} beginning at {begin}')
+      await self.emit('block_error', 'Block too long')
       return
     if block_index < self.num_blocks - 1:
       if len(block) != self.block_length:
-        logging.warning(f'Piece {self.index} received block of length {len(block)} != {self.block_length}')
-        self.emit('block_error', block_index, 'Block size mismatch')
+        logging.warning(f'Piece {self.index} received block of length {len(block)} != {self.block_length} beginning at {begin}')
+        await self.emit('block_error', block_index, 'Block size mismatch')
         return
     self.blocks_received.add(block_index)
-    self._check_completed()
+    await self._check_completed()
 
-  def _check_completed(self):
+  async def _check_completed(self):
     if len(self.blocks_received) == self.num_blocks:
       if sha1(self.data).digest() != self.hash:
-        self.emit('piece_error', 'Hash mismatch')
+        await self.emit('piece_error', 'Hash mismatch')
         return
       logging.debug(f'Piece {self.index} completed with hash {self.hash.hex()}')
-      self.emit('completed', self.data)
+      await self.emit('completed', self.data)

@@ -2,9 +2,10 @@ import logging
 from random import shuffle
 from peer import Peer
 from event_emitter import EventEmitter
+import asyncio
 
 # TODO: adjust these limits
-MAX_ACTIVE_CONNECTIONS = 1
+MAX_ACTIVE_CONNECTIONS = 2
 MAX_DOWNLOADING_FROM = 1
 MAX_UPLOADING_TO = 1
 
@@ -32,29 +33,29 @@ class PeerManager(EventEmitter):
       peer = Peer(torrent, peer_info)
 
       @capture(peer=peer)
-      def on_panic(peer, reason):
+      async def on_panic(peer, reason):
         this.peers.remove(peer)
-        this.connect_to_new_peer()
+        await this.connect_to_new_peer()
 
       @capture(peer=peer)
-      def on_available(peer):
+      async def on_available(peer):
         logging.debug(f'{peer} is available')
         matching_pieces = self.torrent.want & peer.has
         if matching_pieces:
           piece_to_request = matching_pieces.pop()
           self.torrent.on_piece_downloading(piece_to_request)
-          peer.schedule_piece_download(piece_to_request)
+          await peer.schedule_piece_download(piece_to_request)
         else:
           logging.debug(f'No matching pieces between what we want and what {peer} has')
 
       @capture(peer=peer)
-      def on_connect(peer):
+      async def on_connect(peer):
         # TODO: we are not always interested
-        peer.make_interested(True)
-        peer.main_loop()
+        await peer.make_interested(True)
+        await peer.main_loop()
 
-      def on_piece_downloaded(piece_index, data):
-        self.emit('piece_downloaded', piece_index, data)
+      async def on_piece_downloaded(piece_index, data):
+        await self.emit('piece_downloaded', piece_index, data)
 
       peer.on('panic', on_panic)
       # TODO: inform other peers that this piece is now available
@@ -64,18 +65,21 @@ class PeerManager(EventEmitter):
 
       self.peers.add(peer)
 
-  def connect_to_new_peer(self):
+  async def connect_to_new_peer(self):
     prioritized_peers = list(self.peers)
     shuffle(prioritized_peers)
 
     for peer in prioritized_peers:
       if not peer.is_connected:
-        peer.connect()
+        await peer.connect()
         return True
     return False
 
-  def connect(self):
+  async def connect(self):
+    peer_tasks = []
     for _ in range(MAX_ACTIVE_CONNECTIONS):
-      has_connected = self.connect_to_new_peer()
-      if not has_connected:
-        break
+      peer_tasks.append(self.connect_to_new_peer())
+      # has_connected = await self.connect_to_new_peer()
+      # if not has_connected:
+      #   break
+    await asyncio.gather(*peer_tasks)

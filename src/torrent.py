@@ -10,6 +10,7 @@ from peer_manager import PeerManager
 import sys
 from storage import Storage
 from time import time
+import asyncio
 
 DOWNLOAD_SPEED_ESTIMATE_WINDOW = 100
 
@@ -51,7 +52,8 @@ class Torrent:
 
     self.peer_manager = PeerManager(self, self.tracker.peers_info)
     self.peer_manager.on('piece_downloaded', self.on_piece_downloaded)
-    self.peer_manager.connect()
+
+    asyncio.run(self.peer_manager.connect())
 
   def on_piece_downloading(self, piece_index):
     self.want.remove(piece_index)

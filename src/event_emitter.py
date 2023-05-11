@@ -1,3 +1,5 @@
+import asyncio
+
 class EventEmitter:
   def __init__(self):
     self._listeners = {}
@@ -11,7 +13,9 @@ class EventEmitter:
     if event in self._listeners:
       self._listeners[event].remove(listener)
 
-  def emit(self, event, *args, **kwargs):
+  async def emit(self, event, *args, **kwargs):
     if event in self._listeners:
       for listener in self._listeners[event]:
-        listener(*args, **kwargs)
+        task = listener(*args, **kwargs)
+        if asyncio.iscoroutine(task):
+          await task

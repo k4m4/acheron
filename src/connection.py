@@ -1,15 +1,18 @@
 import socket
 import logging
 import abc
+import asyncio
 
 class Connection(metaclass=abc.ABCMeta):
   def __init__(self, ip, port):
-    self.socket = None
+    # self.socket = None
+    self.reader = None
+    self.writer = None
     self.is_connected = False
     self.ip = ip
     self.port = port
 
-  def connect(self):
+  async def connect(self):
     try:
       socket.inet_pton(socket.AF_INET6, self.ip)
       protocol = socket.AF_INET6
@@ -21,12 +24,13 @@ class Connection(metaclass=abc.ABCMeta):
         self._warning(f'Invalid IP address: {self.ip}')
         return
 
-    self.socket = socket.socket(protocol, socket.SOCK_STREAM)
+    # self.socket = socket.socket(protocol, socket.SOCK_STREAM)
 
     self._debug(f'Connecting to {self.ip}:{self.port}')
 
     try:
-      self.socket.connect((self.ip, self.port))
+      # self.socket.connect((self.ip, self.port))
+      self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
     except ConnectionRefusedError:
       self.panic('Connection refused')
       return
@@ -35,14 +39,15 @@ class Connection(metaclass=abc.ABCMeta):
       return
 
     self.is_connected = True
-    self.on_connect()
+    await self.on_connect()
 
-  def main_loop(self):
+  async def main_loop(self):
     buffer = b''
     while True:
       # blocking
       try:
-        buffer += self.socket.recv(4096)
+        # buffer += self.socket.recv(4096)
+        buffer += await self.reader.read(4096)
       except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
         self.panic('Connection with remote peer failed while receiving data')
         return
@@ -53,7 +58,7 @@ class Connection(metaclass=abc.ABCMeta):
       while True:
         old_buffer_len = len(buffer)
         try:
-          buffer = self.on_data(buffer)
+          buffer = await self.on_data(buffer)
           if not buffer:
             # we consumed everything -- no need to keep processing current buffer
             break
@@ -63,12 +68,21 @@ class Connection(metaclass=abc.ABCMeta):
         except ValueError as e:
           pass
 
-  def panic(self, reason):
-    self.socket.close()
+  async def send_data(self, data):
+    # self.socket.send(data)
+    self.writer.write(data)
+    await self.writer.drain()
+
+  async def close(self):
+    # self.socket.close()
+    self.writer.close()
+    await self.writer.wait_closed()
+
+  async def panic(self, reason):
+    self.close()
     self._warning(f'Peer panic: {reason}')
     self.is_connected = False
-    if self.on_panic:
-      self.on_panic(reason)
+    await self.on_panic(reason)
 
   def _identifier(self):
     return f'{self.ip}:{self.port}'
@@ -82,14 +96,11 @@ class Connection(metaclass=abc.ABCMeta):
   def _info(self, msg):
     logging.info(f'[{self._identifier()}] {msg}')
 
-  @abc.abstractmethod
-  def on_connect(self):
+  async def on_panic(self, reason):
     pass
 
-  @abc.abstractmethod
-  def on_panic(self, reason):
+  async def on_connect(self):
     pass
 
-  @abc.abstractmethod
-  def on_data(self, buffer):
+  async def on_data(self, buffer):
     pass
