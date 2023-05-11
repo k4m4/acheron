@@ -9,6 +9,9 @@ from math import ceil
 from peer_manager import PeerManager
 import sys
 from storage import Storage
+from time import time
+
+DOWNLOAD_SPEED_ESTIMATE_WINDOW = 100
 
 class Torrent:
   def __init__(self, client, bencoded_metadata):
@@ -34,6 +37,7 @@ class Torrent:
 
     self.want = set(range(self.num_pieces)) - self.have
     self.pending = set()
+    self.recent_pieces_downloaded = [] # for estimating download speed
 
     self.client = client
 
@@ -51,9 +55,23 @@ class Torrent:
 
   def on_piece_downloading(self, piece_index):
     self.want.remove(piece_index)
+    # TODO: pending must timeout at some point
     self.pending.add(piece_index)
 
   def on_piece_downloaded(self, index, data):
+    self.recent_pieces_downloaded.append({
+      'index': index,
+      'amount': len(data),
+      'timestamp': time()
+    })
+    if len(self.recent_pieces_downloaded) > DOWNLOAD_SPEED_ESTIMATE_WINDOW:
+      self.recent_pieces_downloaded = self.recent_pieces_downloaded[-DOWNLOAD_SPEED_ESTIMATE_WINDOW:]
+
+    recent_timestamp = self.recent_pieces_downloaded[0]['timestamp']
+    recent_amount = sum([piece['amount'] for piece in self.recent_pieces_downloaded])
+    download_speed = recent_amount / (time() - recent_timestamp) # bytes per second
+    logging.info(f'Download speed: {download_speed / 1024:.2f} KB/s')
+
     self.storage.write_piece(self.piece_length, index, data)
     self.have.add(index)
     # TODO: handle receiving a piece that was not pending
@@ -96,6 +114,7 @@ class Torrent:
     logging.debug(f'Info hash is {self.info_hash.hex()}')
 
     if b'files' in info: # multifile mode
+      self.info(f'Downloading file: {info[b"files"]}')
       self.files = info[b'files']
       # TODO: handle multifile mode
     else: # single file mode

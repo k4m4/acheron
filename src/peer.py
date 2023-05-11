@@ -12,6 +12,8 @@ PROTOCOL_STRING = b'BitTorrent protocol'
 TEST_WITH_LOCAL_PEER = False
 BLOCK_LENGTH = 16 * 1024
 
+NUM_PARALLEL_PIECE_REQUESTS_PER_PEER = 1
+
 class ProtocolException(Exception):
   pass
 
@@ -180,38 +182,43 @@ class Peer(Connection, EventEmitter):
     self._ensure_piece_index_in_range(piece_message.data['index'])
 
     piece_index = piece_message.data['index']
-    if piece_index not in self.pending_pieces:
-      def on_completed(piece_data):
-        self._debug(f'Piece {piece_index} completed')
-        del self.pending_pieces[piece_index]
-        self.emit('piece_downloaded', piece_index, piece_data)
-        self.emit('available')
-
-      def on_piece_error(reason):
-        self._warning(f'Piece {piece_index} failed: {reason}')
-        self.request_piece(piece_index)
-
-      def on_block_error(block_index, reason):
-        self._warning(f'Block of piece {piece_index} failed: {reason}; re-requesting block')
-        self.request_block(piece_index, block_index)
-
-      self.pending_pieces[piece_index] = Piece(
-        self,
-        piece_index,
-        self.torrent.piece_length,
-        self.torrent.get_piece_hash(piece_index),
-        BLOCK_LENGTH,
-      )
-      self.pending_pieces[piece_index].on('completed', on_completed)
-      self.pending_pieces[piece_index].on('piece_error', on_piece_error)
-      self.pending_pieces[piece_index].on('block_error', on_block_error)
 
     piece = self.pending_pieces[piece_index]
     piece.on_block_arrival(piece_message.data['begin'], piece_message.data['block'])
 
-  def schedule_piece_download(self, index):
-    # TODO: make this a queue, have a maximum number of simultaneous requests ongoing
-    self.request_piece(index)
+  def schedule_piece_download(self, piece_index):
+    assert piece_index not in self.pending_pieces
+
+    self.pending_pieces[piece_index] = Piece(
+      self,
+      piece_index,
+      self.torrent.piece_length,
+      self.torrent.get_piece_hash(piece_index),
+      BLOCK_LENGTH
+    )
+
+    def on_completed(piece_data):
+      self._debug(f'Piece {piece_index} completed')
+      del self.pending_pieces[piece_index]
+      self.emit('piece_downloaded', piece_index, piece_data)
+      self.emit('available')
+
+    def on_piece_error(reason):
+      self._warning(f'Piece {piece_index} failed: {reason}')
+      self.request_piece(piece_index)
+
+    def on_block_error(block_index, reason):
+      self._warning(f'Block of piece {piece_index} failed: {reason}; re-requesting block')
+      self.request_block(piece_index, block_index)
+
+    self.pending_pieces[piece_index].on('completed', on_completed)
+    self.pending_pieces[piece_index].on('piece_error', on_piece_error)
+    self.pending_pieces[piece_index].on('block_error', on_block_error)
+
+    self.request_piece(piece_index)
+
+    if len(self.pending_pieces) < NUM_PARALLEL_PIECE_REQUESTS_PER_PEER:
+      self.emit('available')
 
   def request_block(self, piece_index, block_index):
     # self._debug(f'Requesting block {block_index} of piece {piece_index}')

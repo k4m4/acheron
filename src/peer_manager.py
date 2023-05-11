@@ -42,8 +42,8 @@ class PeerManager(EventEmitter):
         matching_pieces = self.torrent.want & peer.has
         if matching_pieces:
           piece_to_request = matching_pieces.pop()
-          peer.schedule_piece_download(piece_to_request)
           self.torrent.on_piece_downloading(piece_to_request)
+          peer.schedule_piece_download(piece_to_request)
         else:
           logging.debug(f'No matching pieces between what we want and what {peer} has')
 
