@@ -31,7 +31,10 @@ def dispatcher(message_class):
 
 class Peer(Connection, EventEmitter):
   def __init__(self, torrent, peer_info):
+    EventEmitter.__init__(self)
     self.torrent = torrent
+
+    assert torrent.piece_length % BLOCK_LENGTH == 0
 
     if TEST_WITH_LOCAL_PEER:
       ip = '127.0.0.1'
@@ -40,7 +43,7 @@ class Peer(Connection, EventEmitter):
       ip = peer_info['ip']
       port = peer_info['port']
     self.peer_id = peer_info['peer id']
-    super().__init__(ip, port)
+    Connection.__init__(self, ip, port)
 
     self.am_choking = True
     self.peer_choking = True
@@ -59,8 +62,8 @@ class Peer(Connection, EventEmitter):
   def on_connect(self):
     self._debug(f'Connected')
     self._send_handshake()
-    self._make_interested(True)
-    self._main_loop()
+    self.emit('connect')
+    # TODO: send bitfield
 
   def on_data(self, buffer):
     if not self.handshook:
@@ -86,7 +89,7 @@ class Peer(Connection, EventEmitter):
     return buffer
 
   def _on_message(self, message):
-    self._debug(f'Received message of type {type(message).__name__}: {message}')
+    self._debug(f'<- {message}')
 
     for dispatcher in dispatch_handlers[type(message)]:
       dispatcher(self, message)
@@ -98,7 +101,7 @@ class Peer(Connection, EventEmitter):
   @dispatcher(UnchokeMessage)
   def _on_unchoke(self, _):
     self.peer_choking = False
-    self.on('available')
+    self.emit('available')
 
   @dispatcher(InterestedMessage)
   def _on_interested(self, _):
@@ -167,9 +170,11 @@ class Peer(Connection, EventEmitter):
       self._debug(f'Peer requested piece with invalid length')
       return
 
-    data = self.torrent.read_piece_from_disk(index)[begin:begin+length]
+    data = self.torrent.read_piece(index)[begin:begin+length]
     self._send(PieceMessage(index=index, begin=begin, block=data))
 
+  # This message represents the data of a single block within the piece,
+  # not a whole piece
   @dispatcher(PieceMessage)
   def _on_piece(self, piece_message):
     self._ensure_piece_index_in_range(piece_message.data['index'])
@@ -179,10 +184,16 @@ class Peer(Connection, EventEmitter):
       def on_completed(piece_data):
         self._debug(f'Piece {piece_index} completed')
         del self.pending_pieces[piece_index]
-        self.on('piece_download', piece_index, piece_data)
+        self.emit('piece_downloaded', piece_index, piece_data)
+        self.emit('available')
 
-      def on_error(reason):
-        self.panic(f'Piece {piece_index} failed: {reason}')
+      def on_piece_error(reason):
+        self._warning(f'Piece {piece_index} failed: {reason}')
+        self.request_piece(piece_index)
+
+      def on_block_error(block_index, reason):
+        self._warning(f'Block of piece {piece_index} failed: {reason}; re-requesting block')
+        self.request_block(piece_index, block_index)
 
       self.pending_pieces[piece_index] = Piece(
         self,
@@ -190,21 +201,29 @@ class Peer(Connection, EventEmitter):
         self.torrent.piece_length,
         self.torrent.get_piece_hash(piece_index),
         BLOCK_LENGTH,
-        on_completed,
-        on_error
       )
+      self.pending_pieces[piece_index].on('completed', on_completed)
+      self.pending_pieces[piece_index].on('piece_error', on_piece_error)
+      self.pending_pieces[piece_index].on('block_error', on_block_error)
+
     piece = self.pending_pieces[piece_index]
     piece.on_block_arrival(piece_message.data['begin'], piece_message.data['block'])
 
   def schedule_piece_download(self, index):
-    # TODO: make this a queue
+    # TODO: make this a queue, have a maximum number of simultaneous requests ongoing
     self.request_piece(index)
 
+  def request_block(self, piece_index, block_index):
+    # self._debug(f'Requesting block {block_index} of piece {piece_index}')
+    # TODO: handle last block of last piece
+    self._send(RequestMessage(index=piece_index, begin=block_index*BLOCK_LENGTH, length=BLOCK_LENGTH))
+
   def request_piece(self, piece_index):
+    # self._debug(f'Requesting piece {piece_index}')
     self._ensure_piece_index_in_range(piece_index)
 
-    for i in range(0, self.torrent.piece_length, BLOCK_LENGTH):
-      self._send(RequestMessage(index=piece_index, begin=i, length=BLOCK_LENGTH))
+    for block_index in range(self.torrent.piece_length // BLOCK_LENGTH):
+      self.request_block(piece_index, block_index)
 
   @dispatcher(CancelMessage)
   def _on_cancel(self, cancel_message):
@@ -250,14 +269,14 @@ class Peer(Connection, EventEmitter):
           # does not match the peer_id reported by the peer itself.
           # This is due to e.g., Azureus "anonymity" option
           # See: https://wiki.theory.org/BitTorrentSpecification#Handshake
-          self._warn(f"{match['warn']}: expected {match['expected']}, got {match['actual']}")
+          self._warning(f"{match['warn']}: expected {match['expected']}, got {match['actual']}")
     self.human_peer_id = peer_id_to_human_peer_id(handshake_message.data['peer_id'])
 
     # TODO: show reserved bits
     self._debug(f'Remote peer is running {self.human_peer_id}')
 
   def _close_with_error(self, msg):
-    self._warn(msg)
+    self._warning(msg)
     self.socket.close()
     raise ProtocolException(msg)
 
@@ -271,7 +290,7 @@ class Peer(Connection, EventEmitter):
 
     self._send(handshake_message)
 
-  def _make_interested(self, am_interested=True):
+  def make_interested(self, am_interested=True):
     self._debug(f'Changing interested flag to {am_interested}')
     if am_interested == self.am_interested:
       return
@@ -292,7 +311,7 @@ class Peer(Connection, EventEmitter):
       self._send(UnchokeMessage())
 
   def _send(self, message):
-    self._debug(f'Sending message of type {type(message).__name__}')
+    self._debug(f'-> {message}')
     self.socket.send(message.to_bytes())
 
   def on_panic(self, reason):

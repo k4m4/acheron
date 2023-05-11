@@ -1,8 +1,12 @@
 import logging
 from random import shuffle
 from peer import Peer
+from event_emitter import EventEmitter
 
+# TODO: adjust these limits
 MAX_ACTIVE_CONNECTIONS = 1
+MAX_DOWNLOADING_FROM = 1
+MAX_UPLOADING_TO = 1
 
 def capture(*args1, **kwargs1):
   def decorator(fn):
@@ -11,10 +15,14 @@ def capture(*args1, **kwargs1):
     return wrapper
   return decorator
 
-class PeerManager:
-  def __init__(self, torrent, peers_info, on_piece_download=None):
+class PeerManager(EventEmitter):
+  def __init__(self, torrent, peers_info):
+    EventEmitter.__init__(self)
+
     self.torrent = torrent
     self.peers = set()
+    self.downloading_from = set()
+    self.uploading_to = set()
 
     for i, peer_info in enumerate(peers_info):
       logging.debug(f'Peer {i}: {peer_info}')
@@ -30,13 +38,30 @@ class PeerManager:
 
       @capture(peer=peer)
       def on_available(peer):
-        logging.debug(f'Peer {peer} is available')
+        logging.debug(f'{peer} is available')
+        matching_pieces = self.torrent.want & peer.has
+        if matching_pieces:
+          piece_to_request = matching_pieces.pop()
+          peer.schedule_piece_download(piece_to_request)
+          self.torrent.on_piece_downloading(piece_to_request)
+        else:
+          logging.debug(f'No matching pieces between what we want and what {peer} has')
+
+      @capture(peer=peer)
+      def on_connect(peer):
+        # TODO: we are not always interested
+        peer.make_interested(True)
+        peer.main_loop()
+
+      def on_piece_downloaded(piece_index, data):
+        self.emit('piece_downloaded', piece_index, data)
 
       peer.on('panic', on_panic)
-      peer.on('piece_download', on_piece_download)
+      # TODO: inform other peers that this piece is now available
+      peer.on('piece_downloaded', on_piece_downloaded)
       peer.on('available', on_available)
+      peer.on('connect', on_connect)
 
-      panic_handler.update_peer(peer)
       self.peers.add(peer)
 
   def connect_to_new_peer(self):

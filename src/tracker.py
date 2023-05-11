@@ -6,6 +6,9 @@ import bencodepy
 import socket
 import struct
 
+# TODO: re-request data from tracker periodically
+# and ensure delays/timeouts are respected, and 'event' is reported
+# (generally, make sure tracker is informed of our intentions)
 class Tracker:
   def __init__(self, torrent):
     self.torrent = torrent
@@ -27,7 +30,7 @@ class Tracker:
       # TODO: gracefully handle error
       logging.error(f'Error requesting from tracker: {r.status_code}')
       logging.error(r.content)
-      return
+      raise Exception(f'Error requesting from tracker: {r.status_code}')
     logging.debug('Received tracker response')
     decoded = bencodepy.decode(r.content)
     self.parse_tracker_response(decoded)

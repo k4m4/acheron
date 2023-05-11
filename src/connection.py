@@ -18,7 +18,7 @@ class Connection(metaclass=abc.ABCMeta):
         socket.inet_pton(socket.AF_INET, self.ip)
         protocol = socket.AF_INET
       except socket.error:
-        self._warn(f'Invalid IP address: {self.ip}')
+        self._warning(f'Invalid IP address: {self.ip}')
         return
 
     self.socket = socket.socket(protocol, socket.SOCK_STREAM)
@@ -37,7 +37,7 @@ class Connection(metaclass=abc.ABCMeta):
     self.is_connected = True
     self.on_connect()
 
-  def _main_loop(self):
+  def main_loop(self):
     buffer = b''
     while True:
       # blocking
@@ -65,7 +65,7 @@ class Connection(metaclass=abc.ABCMeta):
 
   def panic(self, reason):
     self.socket.close()
-    self._warn(f'Peer panic: {reason}')
+    self._warning(f'Peer panic: {reason}')
     self.is_connected = False
     if self.on_panic:
       self.on_panic(reason)
@@ -73,8 +73,8 @@ class Connection(metaclass=abc.ABCMeta):
   def _identifier(self):
     return f'{self.ip}:{self.port}'
 
-  def _warn(self, msg):
-    logging.warn(f'[{self._identifier()}] {msg}')
+  def _warning(self, msg):
+    logging.warning(f'[{self._identifier()}] {msg}')
 
   def _debug(self, msg):
     logging.debug(f'[{self._identifier()}] {msg}')
