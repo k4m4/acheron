@@ -8,11 +8,19 @@ class Connection(metaclass=abc.ABCMeta):
     # self.socket = None
     self.reader = None
     self.writer = None
+    self.is_connecting = False
     self.is_connected = False
+    self.is_processing = False
     self.ip = ip
     self.port = port
 
   async def connect(self):
+    if self.is_connecting:
+      raise ConnectionError('The peer is already trying to connect')
+    if self.is_connected:
+      raise ConnectionError('The peer is already connected')
+    self.is_connecting = True
+
     try:
       socket.inet_pton(socket.AF_INET6, self.ip)
       protocol = socket.AF_INET6
@@ -39,9 +47,17 @@ class Connection(metaclass=abc.ABCMeta):
       return
 
     self.is_connected = True
+    self.is_connecting = False
+
     await self.on_connect()
 
   async def main_loop(self):
+    if self.is_processing:
+      raise ConnectionError('The peer is already processing data')
+    if not self.is_connected:
+      raise ConnectionError('The peer is not connected')
+    self.is_processing = True
+
     buffer = b''
     while True:
       # blocking
@@ -50,6 +66,7 @@ class Connection(metaclass=abc.ABCMeta):
         buffer += await self.reader.read(4096)
       except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
         self.panic('Connection with remote peer failed while receiving data')
+        self.is_processing = False
         return
 
       # self._debug(f'Received {len(buffer)} bytes')

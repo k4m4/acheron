@@ -51,6 +51,7 @@ class PeerManager(EventEmitter):
       @capture(peer=peer)
       async def on_connect(peer):
         # TODO: we are not always interested
+        logging.debug(f'Connection event for {peer}')
         await peer.make_interested(True)
         await peer.main_loop()
 
@@ -70,7 +71,7 @@ class PeerManager(EventEmitter):
     shuffle(prioritized_peers)
 
     for peer in prioritized_peers:
-      if not peer.is_connected:
+      if not peer.is_connected and not peer.is_connecting:
         await peer.connect()
         return True
     return False
