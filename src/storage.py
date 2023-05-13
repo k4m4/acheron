@@ -11,7 +11,8 @@ class Storage:
     Path(self.data_file).touch()
 
     os.makedirs(os.path.dirname(self.meta_file), exist_ok=True)
-    Path(self.meta_file).touch()
+    if not os.path.exists(self.meta_file):
+      self.write_meta_file(set())
 
   def read_piece(self, piece_length, index):
     with open(self.data_file, 'rb') as f:
