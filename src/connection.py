@@ -117,6 +117,9 @@ class Connection(metaclass=abc.ABCMeta):
       await self.panic(f'Connection with remote peer failed while sending data: {e}')
 
   async def close(self):
+    if not self.writer:
+      return
+
     self.writer.close()
     await self.writer.wait_closed()
 
