@@ -22,7 +22,10 @@ class Tracker:
       'uploaded': 0,
       'downloaded': 0,
       'left': self.torrent.length,
-      'compact': 1
+      'numwant': len(self.torrent.want),
+      'key': self.torrent.client.key,
+      'compact': 1,
+      'event': 'started'
     }
     logging.info(f'Requesting from tracker {self.torrent.announce_url}')
     r = requests.get(self.torrent.announce_url, params=params)
@@ -32,13 +35,16 @@ class Tracker:
       logging.error(r.content)
       raise Exception(f'Error requesting from tracker: {r.status_code}')
     logging.debug('Received tracker response')
+    pprint(r.content)
     decoded = bencodepy.decode(r.content)
+    pprint(decoded)
     self.parse_tracker_response(decoded)
 
   def parse_tracker_response(self, response):
-    self.interval = response[b'interval']
-    self.seeders = response[b'complete']
-    self.leechers = response[b'incomplete']
+    # TODO: Use a default interval
+    self.interval = response.get(b'interval')
+    self.seeders = response.get(b'complete')
+    self.leechers = response.get(b'incomplete')
 
     logging.debug(f'Seeders: {self.seeders}')
     logging.debug(f'Leechers: {self.leechers}')

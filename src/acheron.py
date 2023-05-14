@@ -18,6 +18,7 @@ class Client:
     logging.info(f'{CLIENT_NAME} {VERSION} - A torrent client')
 
     self.peer_id = CLIENT_ID + token_bytes(20 - len(CLIENT_ID))
+    self.key = token_bytes(4).hex()
     self.listen_port = LISTEN_PORT
 
     with open(torrent_file, 'rb') as f:
