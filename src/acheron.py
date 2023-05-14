@@ -2,6 +2,7 @@ from torrent import Torrent
 from secrets import token_bytes
 from pprint import pprint
 import logging
+import warnings
 
 LISTEN_PORT = 6881
 CLIENT_ID = b'-AH0001-'
@@ -21,4 +22,9 @@ class Client:
       metadata = f.read()
       torrent = Torrent(self, metadata)
 
-client = Client()
+def main():
+  warnings.filterwarnings("error", category=RuntimeWarning)
+  client = Client()
+
+if __name__ == '__main__':
+  main()
