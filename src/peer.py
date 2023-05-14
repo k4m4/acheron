@@ -205,7 +205,10 @@ class Peer(Connection, EventEmitter):
       self._debug(f'Piece {piece_index} completed')
       del self.pending_pieces[piece_index]
       await self.emit('piece_downloaded', piece_index, piece_data)
-      await self.emit('available')
+      if not self.peer_choking:
+        # TODO: timeout if we are never unchoked
+        # TODO: timeout if we are unchoked but the peer is not responding to our requests with valid pieces
+        await self.emit('available')
 
     async def on_piece_error(reason):
       self._warning(f'Piece {piece_index} failed: {reason}')
@@ -322,7 +325,7 @@ class Peer(Connection, EventEmitter):
     else:
       await self.send(NotInterestedMessage())
 
-  async def _make_choking(self, am_choking=True):
+  async def make_choking(self, am_choking=True):
     self._debug(f'Changing choking flag to {am_choking}')
     if am_choking == self.am_choking:
       return

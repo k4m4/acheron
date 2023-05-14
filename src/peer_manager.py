@@ -6,9 +6,9 @@ from message import HaveMessage
 import asyncio
 
 # TODO: adjust these limits
-MAX_ACTIVE_CONNECTIONS = 1
-MAX_DOWNLOADING_FROM = 1
-MAX_UPLOADING_TO = 1
+MAX_ACTIVE_CONNECTIONS = 20
+MAX_DOWNLOADING_FROM = 5
+MAX_UPLOADING_TO = 5
 
 def capture(*args1, **kwargs1):
   def decorator(fn):
@@ -29,14 +29,16 @@ class PeerManager(EventEmitter):
     for i, peer_info in enumerate(peers_info):
       logging.debug(f'Peer {i}: {peer_info}')
 
-      this = self
-
       peer = Peer(torrent, peer_info)
 
       @capture(peer=peer)
       async def on_panic(peer, reason):
-        this.peers.remove(peer)
-        await this.connect_to_new_peer()
+        self.peers.remove(peer)
+        self.downloading_from.discard(peer)
+        self.uploading_to.discard(peer)
+        await self.connect_to_new_peer()
+        await self.find_peer_to_download_from()
+        await self.find_peer_to_upload_to()
 
       @capture(peer=peer)
       async def on_available(peer):
@@ -48,14 +50,26 @@ class PeerManager(EventEmitter):
           self.torrent.on_piece_downloading(piece_to_request)
           await peer.schedule_piece_download(piece_to_request)
         else:
+          await peer.make_interested(False)
+          self.downloading_from.discard(peer)
+          await self.find_peer_to_download_from()
           logging.debug(f'No matching pieces between what we want and what {peer} has')
 
       @capture(peer=peer)
       async def on_connect(peer):
-        # TODO: we are not always interested
         logging.debug(f'Connection event for {peer}')
-        await peer.make_interested(True)
+        await self.find_peer_to_download_from()
+        await self.find_peer_to_upload_to()
         await peer.main_loop()
+
+      @capture(peer=peer)
+      async def on_not_interested(peer):
+        self.uploading_to.discard(peer)
+        await self.find_peer_to_upload_to()
+
+      @capture(peer=peer)
+      async def on_interested(peer):
+        await self.find_peer_to_upload_to()
 
       async def on_piece_downloaded(piece_index, data):
         await self.emit('piece_downloaded', piece_index, data)
@@ -65,8 +79,44 @@ class PeerManager(EventEmitter):
       peer.on('piece_downloaded', on_piece_downloaded)
       peer.on('available', on_available)
       peer.on('connect', on_connect)
+      peer.on('interested', on_interested)
+      peer.on('not_interested', on_not_interested)
 
       self.peers.add(peer)
+
+  async def find_peer_to_download_from(self):
+    if len(self.downloading_from) >= MAX_DOWNLOADING_FROM:
+      return
+
+    for peer in self.peers:
+      if not peer.is_connected or peer in self.downloading_from:
+        continue
+      if not peer.has & self.torrent.want:
+        continue
+      self.downloading_from.add(peer)
+      await peer.make_interested(True)
+      if len(self.downloading_from) >= MAX_DOWNLOADING_FROM:
+        break
+
+    logging.debug(f'Currently downloading from {len(self.downloading_from)} peers')
+
+  async def find_peer_to_upload_to(self):
+    if len(self.uploading_to) >= MAX_UPLOADING_TO:
+      return
+
+    new_peer_count = MAX_UPLOADING_TO - len(self.uploading_to)
+
+    for peer in list(self.downloading_from) + list(self.peers):
+      if not peer.is_connected or peer in self.uploading_to:
+        continue
+      if not peer.peer_interested:
+        continue
+      self.uploading_to.add(peer)
+      await peer.make_choking(False)
+      if len(self.uploading_to) >= MAX_UPLOADING_TO:
+        break
+
+    logging.debug(f'Currently uploading to {len(self.uploading_to)} peers')
 
   async def broadcast(self, message):
     for peer in self.peers:
@@ -87,7 +137,4 @@ class PeerManager(EventEmitter):
     peer_tasks = []
     for _ in range(MAX_ACTIVE_CONNECTIONS):
       peer_tasks.append(self.connect_to_new_peer())
-      # has_connected = await self.connect_to_new_peer()
-      # if not has_connected:
-      #   break
     await asyncio.gather(*peer_tasks)
