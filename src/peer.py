@@ -320,7 +320,7 @@ class Peer(Connection, EventEmitter):
       await self.send(NotInterestedMessage())
 
   async def _make_choking(self, am_choking=True):
-    self._debug(f'Changing choking flag to {am_choked}')
+    self._debug(f'Changing choking flag to {am_choking}')
     if am_choking == self.am_choking:
       return
     self.am_choking = am_choking
