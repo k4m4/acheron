@@ -3,19 +3,13 @@ from random import shuffle
 from peer import Peer
 from event_emitter import EventEmitter
 from message import HaveMessage
+from capture import capture
 import asyncio
 
 # TODO: adjust these limits
 MAX_ACTIVE_CONNECTIONS = 20
 MAX_DOWNLOADING_FROM = 5
 MAX_UPLOADING_TO = 5
-
-def capture(*args1, **kwargs1):
-  def decorator(fn):
-    def wrapper(*args2, **kwargs2):
-      return fn(*[*args1, *args2], **{**kwargs1, **kwargs2})
-    return wrapper
-  return decorator
 
 class PeerManager(EventEmitter):
   def __init__(self, torrent, peers_info):
@@ -31,7 +25,7 @@ class PeerManager(EventEmitter):
 
       peer = Peer(torrent, peer_info)
 
-      @capture(peer=peer)
+      @capture(peer)
       async def on_panic(peer, reason):
         self.peers.remove(peer)
         self.downloading_from.discard(peer)
@@ -40,7 +34,7 @@ class PeerManager(EventEmitter):
         await self.find_peer_to_download_from()
         await self.find_peer_to_upload_to()
 
-      @capture(peer=peer)
+      @capture(peer)
       async def on_available(peer):
         logging.debug(f'{peer} is available')
         matching_pieces = self.torrent.want & peer.has
@@ -55,19 +49,19 @@ class PeerManager(EventEmitter):
           await self.find_peer_to_download_from()
           logging.debug(f'No matching pieces between what we want and what {peer} has')
 
-      @capture(peer=peer)
+      @capture(peer)
       async def on_connect(peer):
         logging.debug(f'Connection event for {peer}')
         await self.find_peer_to_download_from()
         await self.find_peer_to_upload_to()
         await peer.main_loop()
 
-      @capture(peer=peer)
+      @capture(peer)
       async def on_not_interested(peer):
         self.uploading_to.discard(peer)
         await self.find_peer_to_upload_to()
 
-      @capture(peer=peer)
+      @capture(peer)
       async def on_interested(peer):
         await self.find_peer_to_upload_to()
 
