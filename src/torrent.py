@@ -101,9 +101,9 @@ class Torrent:
 
     decoded = bencodepy.decode(bencoded_metadata)
     self.announce_url = decoded[b'announce']
-    self.comment = decoded[b'comment']
-    self.created_by = decoded[b'created by']
-    self.creation_date = decoded[b'creation date']
+    self.comment = decoded.get(b'comment' )
+    self.created_by = decoded.get(b'created by')
+    self.creation_date = decoded.get(b'creation date')
     info = decoded[b'info']
     self.info_value = bencodepy.encode(info)
     hashes_str = info[b'pieces']
