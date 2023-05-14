@@ -236,7 +236,7 @@ class Peer(Connection, EventEmitter):
 
   async def request_piece(self, piece):
     # self._debug(f'Requesting piece {piece_index}')
-    for block_index in piece.num_blocks:
+    for block_index in range(piece.num_blocks):
       await self.request_block(piece, block_index)
 
   @dispatcher(CancelMessage)
