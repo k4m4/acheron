@@ -119,6 +119,7 @@ class Torrent:
       self.info(f'Downloading file: {info[b"files"]}')
       self.files = info[b'files']
       # TODO: handle multifile mode
+      # TODO: fill in self.length
     else: # single file mode
       self.length = info[b'length']
       self.name = info[b'name']

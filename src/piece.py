@@ -4,29 +4,36 @@ import logging
 from event_emitter import EventEmitter
 
 class Piece(EventEmitter):
-  def __init__(self, peer, index, size, hash, block_length):
+  def __init__(self, peer, index, usual_piece_length, hash, block_length):
     EventEmitter.__init__(self)
     self.peer = peer
     self.index = index
-    self.size = size
-    self.num_blocks = ceil(size / block_length)
+    assert 0 <= index < self.peer.torrent.num_pieces
+    self.length = self.expected_length(self.peer.torrent.length, usual_piece_length, index)
+    self.num_blocks = ceil(usual_piece_length / block_length)
     self.hash = hash
     self.block_length = block_length
-    self.data = bytearray(size)
+    self.data = bytearray(self.length)
     self.blocks_received = set()
 
-  async def on_block_arrival(self, begin, block):
-    self.data[begin:begin+len(block)] = block
+  @staticmethod
+  def expected_length(torrent_length, usual_piece_length, piece_index):
+    num_pieces = ceil(torrent_length / usual_piece_length)
+
+    assert piece_index < num_pieces
+
+    if piece_index < num_pieces - 1:
+      return usual_piece_length
+
+    return (torrent_length - 1) % usual_piece_length + 1
+
+  async def on_block_arrival(self, begin, data):
+    self.data[begin:begin+len(data)] = data
     block_index = begin // self.block_length
-    if len(block) > self.block_length:
-      logging.warning(f'Piece {self.index} received block of length {len(block)} > {self.block_length} beginning at {begin}')
-      await self.emit('block_error', 'Block too long')
+    if len(data) != Block.expected_length(self.length, block_index, self.block_length):
+      logging.warning(f'{self} received block of length {len(data)} != {self.length} beginning at {begin}')
+      await self.emit('block_error', block_index, 'Block size mismatch')
       return
-    if block_index < self.num_blocks - 1:
-      if len(block) != self.block_length:
-        logging.warning(f'Piece {self.index} received block of length {len(block)} != {self.block_length} beginning at {begin}')
-        await self.emit('block_error', block_index, 'Block size mismatch')
-        return
     self.blocks_received.add(block_index)
     await self._check_completed()
 
@@ -37,3 +44,15 @@ class Piece(EventEmitter):
         return
       logging.debug(f'Piece {self.index} completed with hash {self.hash.hex()}')
       await self.emit('completed', self.data)
+
+class Block:
+  @staticmethod
+  def expected_length(actual_piece_length, block_index, usual_block_length):
+    num_blocks = ceil(actual_piece_length / usual_block_length)
+
+    if block_index < num_blocks - 1:
+      return usual_block_length
+
+    last_block_length = (actual_piece_length - 1) % usual_block_length + 1
+
+    return last_block_length

@@ -4,7 +4,7 @@ from version import peer_id_to_human_peer_id
 from pprint import pprint
 from message import *
 from math import ceil
-from piece import Piece
+from piece import Block, Piece
 from connection import Connection
 from event_emitter import EventEmitter
 
@@ -189,13 +189,14 @@ class Peer(Connection, EventEmitter):
   async def schedule_piece_download(self, piece_index):
     assert piece_index not in self.pending_pieces
 
-    self.pending_pieces[piece_index] = Piece(
+    piece = Piece(
       self,
       piece_index,
       self.torrent.piece_length,
       self.torrent.get_piece_hash(piece_index),
       BLOCK_LENGTH
     )
+    self.pending_pieces[piece_index] = piece
 
     async def on_completed(piece_data):
       self._debug(f'Piece {piece_index} completed')
@@ -205,32 +206,38 @@ class Peer(Connection, EventEmitter):
 
     async def on_piece_error(reason):
       self._warning(f'Piece {piece_index} failed: {reason}')
-      await self.request_piece(piece_index)
+      # TODO: don't re-request the piece; instead, disconnect from peer and inform PeerManager
+      await self.request_piece(piece)
 
     async def on_block_error(block_index, reason):
       self._warning(f'Block of piece {piece_index} failed: {reason}; re-requesting block')
-      await self.request_block(piece_index, block_index)
+      # TODO: don't re-request the block; instead, disconnect from peer and inform PeerManager
+      await self.request_block(piece, block_index)
 
-    self.pending_pieces[piece_index].on('completed', on_completed)
-    self.pending_pieces[piece_index].on('piece_error', on_piece_error)
-    self.pending_pieces[piece_index].on('block_error', on_block_error)
+    piece.on('completed', on_completed)
+    piece.on('piece_error', on_piece_error)
+    piece.on('block_error', on_block_error)
 
-    await self.request_piece(piece_index)
+    await self.request_piece(piece)
 
     if len(self.pending_pieces) < NUM_PARALLEL_PIECE_REQUESTS_PER_PEER:
       await self.emit('available')
 
-  async def request_block(self, piece_index, block_index):
+  async def request_block(self, piece, block_index):
     # self._debug(f'Requesting block {block_index} of piece {piece_index}')
-    # TODO: handle last block of last piece
-    await self._send(RequestMessage(index=piece_index, begin=block_index*BLOCK_LENGTH, length=BLOCK_LENGTH))
+    block_length = Block.expected_length(
+      actual_piece_length=piece.length,
+      block_index=block_index,
+      usual_block_length=BLOCK_LENGTH
+    )
+    await self._send(
+      RequestMessage(index=piece.index, begin=block_index*BLOCK_LENGTH, length=block_length)
+    )
 
-  async def request_piece(self, piece_index):
+  async def request_piece(self, piece):
     # self._debug(f'Requesting piece {piece_index}')
-    self._ensure_piece_index_in_range(piece_index)
-
     for block_index in range(self.torrent.piece_length // BLOCK_LENGTH):
-      await self.request_block(piece_index, block_index)
+      await self.request_block(piece, block_index)
 
   @dispatcher(CancelMessage)
   async def _on_cancel(self, cancel_message):
