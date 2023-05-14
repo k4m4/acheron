@@ -97,8 +97,17 @@ class Connection(metaclass=abc.ABCMeta):
 
   async def send_data(self, data):
     # self.socket.send(data)
-    self.writer.write(data)
-    await self.writer.drain()
+    try:
+      self.writer.write(data)
+      await self.writer.drain()
+    except (
+      ConnectionResetError,
+      ConnectionAbortedError,
+      BrokenPipeError,
+      asyncio.CancelledError,
+      TimeoutError
+    ) as e:
+      self.panic(f'Connection with remote peer failed while sending data: {e}')
 
   async def close(self):
     # self.socket.close()
