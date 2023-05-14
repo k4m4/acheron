@@ -28,11 +28,11 @@ class Torrent:
     self.name = None
     self.piece_length = None
 
-    self.storage = Storage(data_file="downloads/ubuntu.iso", meta_file="downloads/ubuntu.metadata")
-    self.have = self.storage.read_meta_file()
-
     # TODO: store data returned from tracker to meta file, in case tracker becomes unavailable
     self._init_from_metadata(bencoded_metadata)
+    self.storage = Storage(self.name, self.info_hash.hex())
+
+    self.have = self.storage.read_meta_file()
 
     logging.info(f'We have already downloaded {len(self.have) / self.num_pieces * 100:.2f}% of the torrent')
 

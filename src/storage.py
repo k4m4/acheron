@@ -1,9 +1,23 @@
 import json
 import os
 from pathlib import Path
+import re
+
+DATA_DIR = 'downloads'
 
 class Storage:
-  def __init__(self, data_file, meta_file):
+  def __init__(self, name, info_hash_hex):
+    name = name.decode('utf-8')
+    self.name = name
+    self.info_hash_hex = info_hash_hex
+    # TODO: handle multiple files with the same name
+    # TODO: handle files with weird names
+    # TODO: handle files that contain "/"
+    assert re.fullmatch(r'[a-zA-Z0-9. _-]+', name)
+
+    data_file = os.path.join(DATA_DIR, name)
+    meta_file = os.path.join(DATA_DIR, f'{name}.meta')
+
     self.data_file = data_file
     self.meta_file = meta_file
 
