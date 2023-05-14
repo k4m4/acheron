@@ -14,6 +14,9 @@ import asyncio
 
 DOWNLOAD_SPEED_ESTIMATE_WINDOW = 100
 
+class ExecutionCompleted(Exception):
+  pass
+
 class Torrent:
   def __init__(self, client, bencoded_metadata):
     self.announce_url = None
@@ -53,7 +56,11 @@ class Torrent:
     self.peer_manager = PeerManager(self, self.tracker.peers_info)
     self.peer_manager.on('piece_downloaded', self.on_piece_downloaded)
 
-    asyncio.run(self.peer_manager.connect())
+    try:
+      asyncio.run(self.peer_manager.connect())
+    except ExecutionCompleted:
+      # Terminate program because execution successfully completed
+      sys.exit(0)
 
   def on_piece_downloading(self, piece_index):
     self.want.remove(piece_index)
@@ -87,6 +94,10 @@ class Torrent:
     self.pending.remove(index)
     logging.info(f'Download progress: {len(self.have) / self.num_pieces * 100:.2f}%')
     self.storage.write_meta_file(self.have)
+
+    if len(self.have) == self.num_pieces:
+      logging.info(f'Download complete: {self.storage.data_file}')
+      raise ExecutionCompleted()
 
   def read_piece(self, index):
     assert 0 <= index < self.num_pieces
