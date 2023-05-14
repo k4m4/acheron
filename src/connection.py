@@ -45,11 +45,15 @@ class Connection(metaclass=abc.ABCMeta):
     try:
       # self.socket.connect((self.ip, self.port))
       self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
-    except ConnectionRefusedError:
-      self.panic('Connection refused')
-      return
-    except TimeoutError:
-      self.panic('Connection timed out')
+    except (
+      ConnectionResetError,
+      ConnectionAbortedError,
+      BrokenPipeError,
+      asyncio.CancelledError,
+      TimeoutError,
+      OSError
+    ) as e:
+      self.panic(f'Failed to establish a connection: {e}')
       return
 
     self.is_connected = True
@@ -75,8 +79,15 @@ class Connection(metaclass=abc.ABCMeta):
           return
 
         buffer += new_buffer
-      except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-        await self.panic('Connection with remote peer failed while receiving data')
+      except (
+        ConnectionResetError,
+        ConnectionAbortedError,
+        BrokenPipeError,
+        asyncio.CancelledError,
+        TimeoutError,
+        OSError
+      ) as e:
+        await self.panic(f'Connection with remote peer failed while receiving data: {e}')
         self.is_processing = False
         return
 
@@ -106,7 +117,8 @@ class Connection(metaclass=abc.ABCMeta):
       ConnectionAbortedError,
       BrokenPipeError,
       asyncio.CancelledError,
-      TimeoutError
+      TimeoutError,
+      OSError
     ) as e:
       await self.panic(f'Connection with remote peer failed while sending data: {e}')
 
