@@ -5,7 +5,6 @@ import asyncio
 
 class Connection(metaclass=abc.ABCMeta):
   def __init__(self, ip, port):
-    # self.socket = None
     self.reader = None
     self.writer = None
     self.is_connecting = False
@@ -38,12 +37,9 @@ class Connection(metaclass=abc.ABCMeta):
       self._warning(f'Invalid IP address: {self.ip}')
       return
 
-    # self.socket = socket.socket(protocol, socket.SOCK_STREAM)
-
     self._debug(f'Connecting to {self.ip}:{self.port}')
 
     try:
-      # self.socket.connect((self.ip, self.port))
       self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
     except (
       ConnectionResetError,
@@ -72,7 +68,6 @@ class Connection(metaclass=abc.ABCMeta):
     buffer = b''
     while True:
       try:
-        # buffer += self.socket.recv(4096)
         new_buffer = await self.reader.read(4096)
         if not new_buffer:
           await self.panic('Read an empty buffer')
@@ -108,7 +103,6 @@ class Connection(metaclass=abc.ABCMeta):
           pass
 
   async def send_data(self, data):
-    # self.socket.send(data)
     try:
       self.writer.write(data)
       await self.writer.drain()
@@ -123,7 +117,6 @@ class Connection(metaclass=abc.ABCMeta):
       await self.panic(f'Connection with remote peer failed while sending data: {e}')
 
   async def close(self):
-    # self.socket.close()
     self.writer.close()
     await self.writer.wait_closed()
 
