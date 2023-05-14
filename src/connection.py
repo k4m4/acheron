@@ -57,6 +57,7 @@ class Connection(metaclass=abc.ABCMeta):
 
     await self.on_connect()
 
+  # Under normal circumstances, this function never returns
   async def main_loop(self):
     if self.is_processing:
       raise ConnectionError('The peer is already processing data')
@@ -70,12 +71,12 @@ class Connection(metaclass=abc.ABCMeta):
         # buffer += self.socket.recv(4096)
         new_buffer = await self.reader.read(4096)
         if not new_buffer:
-          self.panic('Read an empty buffer')
+          await self.panic('Read an empty buffer')
           return
 
         buffer += new_buffer
       except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-        self.panic('Connection with remote peer failed while receiving data')
+        await self.panic('Connection with remote peer failed while receiving data')
         self.is_processing = False
         return
 
@@ -107,7 +108,7 @@ class Connection(metaclass=abc.ABCMeta):
       asyncio.CancelledError,
       TimeoutError
     ) as e:
-      self.panic(f'Connection with remote peer failed while sending data: {e}')
+      await self.panic(f'Connection with remote peer failed while sending data: {e}')
 
   async def close(self):
     # self.socket.close()

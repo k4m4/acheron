@@ -108,36 +108,38 @@ class Peer(Connection, EventEmitter):
   @dispatcher(InterestedMessage)
   async def _on_interested(self, _):
     self.peer_interested = True
+    await self.emit('interested')
 
   @dispatcher(NotInterestedMessage)
   async def _on_not_interested(self, _):
     self.peer_interested = False
+    await self.emit('not_interested')
 
   @dispatcher(HaveMessage)
   async def _on_have(self, have_message):
-    self._mark_has(have_message.data['piece_index'])
+    await self._mark_has(have_message.data['piece_index'])
 
-  def _ensure_piece_index_in_range(self, piece_index):
+  async def _ensure_piece_index_in_range(self, piece_index):
     if not 0 <= piece_index < self.torrent.num_pieces:
-      self.panic(f'Invalid piece index: {piece_index}')
+      await self.panic(f'Invalid piece index: {piece_index}')
       return
 
-  def _mark_has(self, piece_index):
-    self._ensure_piece_index_in_range(piece_index)
+  async def _mark_has(self, piece_index):
+    await self._ensure_piece_index_in_range(piece_index)
     self.has.add(piece_index)
 
   @dispatcher(BitfieldMessage)
   async def _on_bitfield(self, bitfield_message):
     if self.received_non_handshake_message:
-      self.panic(f'Bitfield message was not received immediately after handshake')
+      await self.panic(f'Bitfield message was not received immediately after handshake')
       return
 
     if bitfield_message.num_pieces != ceil(self.torrent.num_pieces / 8) * 8:
-      self.panic(f'Invalid bitfield length. bitfield message num_pieces: {bitfield_message.num_pieces}, torrent num_pieces: {self.torrent.num_pieces}')
+      await self.panic(f'Invalid bitfield length. bitfield message num_pieces: {bitfield_message.num_pieces}, torrent num_pieces: {self.torrent.num_pieces}')
       return
 
     for piece in bitfield_message.pieces:
-      self._mark_has(piece)
+      await self._mark_has(piece)
 
     percentage_peer_has = round((len(self.has) / self.torrent.num_pieces) * 100)
     self._info(f'Peer has {percentage_peer_has}% of pieces')
@@ -147,18 +149,19 @@ class Peer(Connection, EventEmitter):
     index = request_message.data['index']
     begin = request_message.data['begin']
     length = request_message.data['length']
-    self._ensure_piece_index_in_range(index)
+    await self._ensure_piece_index_in_range(index)
 
     if self.am_choking:
+      # Be less aggressive -- peer may not have seen the 'choke' yet
       self._debug(f'Peer requested piece while choked')
       return
 
     if not self.peer_interested:
-      self._debug(f'Peer requested piece while not interested')
+      await self.panic(f'Peer requested piece while not interested')
       return
 
     if index not in self.torrent.have:
-      self._debug(f'Peer requested piece that we do not have')
+      await self.panic(f'Peer requested piece that we do not have')
       return
 
     if index < self.torrent.num_pieces - 1:
@@ -179,7 +182,7 @@ class Peer(Connection, EventEmitter):
   # not a whole piece
   @dispatcher(PieceMessage)
   async def _on_piece(self, piece_message):
-    self._ensure_piece_index_in_range(piece_message.data['index'])
+    await self._ensure_piece_index_in_range(piece_message.data['index'])
 
     piece_index = piece_message.data['index']
 
@@ -241,7 +244,7 @@ class Peer(Connection, EventEmitter):
 
   @dispatcher(CancelMessage)
   async def _on_cancel(self, cancel_message):
-    self._ensure_piece_index_in_range(cancel_message.data['index'])
+    await self._ensure_piece_index_in_range(cancel_message.data['index'])
 
   @dispatcher(PortMessage)
   async def _on_port(self, port_message):
@@ -333,8 +336,8 @@ class Peer(Connection, EventEmitter):
     self._debug(f'-> {message}')
     await self.send_data(message.to_bytes())
 
-  def on_panic(self, reason):
-    self.on('panic', reason)
+  async def on_panic(self, reason):
+    await self.emit('panic', reason)
 
   def _identifier(self):
     return f'{self.human_peer_id if self.human_peer_id is not None else self.peer_id} ({self.ip})'
