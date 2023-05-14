@@ -60,6 +60,16 @@ class Torrent:
     # TODO: pending must timeout at some point
     self.pending.add(piece_index)
 
+  def human_download_speed(self):
+    recent_timestamp = self.recent_pieces_downloaded[0]['timestamp']
+    recent_amount = sum([piece['amount'] for piece in self.recent_pieces_downloaded])
+    download_speed = recent_amount / (time() - recent_timestamp) # bytes per second
+    if len(self.recent_pieces_downloaded) > 1:
+      ret = f'{download_speed / 1024:.2f} KB/s'
+    else:
+      ret = 'Unknown'
+    return ret
+
   def on_piece_downloaded(self, index, data):
     self.recent_pieces_downloaded.append({
       'index': index,
@@ -69,10 +79,7 @@ class Torrent:
     if len(self.recent_pieces_downloaded) > DOWNLOAD_SPEED_ESTIMATE_WINDOW:
       self.recent_pieces_downloaded = self.recent_pieces_downloaded[-DOWNLOAD_SPEED_ESTIMATE_WINDOW:]
 
-    recent_timestamp = self.recent_pieces_downloaded[0]['timestamp']
-    recent_amount = sum([piece['amount'] for piece in self.recent_pieces_downloaded])
-    download_speed = recent_amount / (time() - recent_timestamp) # bytes per second
-    logging.info(f'Download speed: {download_speed / 1024:.2f} KB/s')
+    logging.info(f'Download speed: {self.human_download_speed()}')
 
     self.storage.write_piece(self.piece_length, index, data)
     self.have.add(index)
