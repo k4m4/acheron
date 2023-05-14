@@ -5,7 +5,7 @@ from event_emitter import EventEmitter
 import asyncio
 
 # TODO: adjust these limits
-MAX_ACTIVE_CONNECTIONS = 2
+MAX_ACTIVE_CONNECTIONS = 1
 MAX_DOWNLOADING_FROM = 1
 MAX_UPLOADING_TO = 1
 
@@ -42,7 +42,8 @@ class PeerManager(EventEmitter):
         logging.debug(f'{peer} is available')
         matching_pieces = self.torrent.want & peer.has
         if matching_pieces:
-          piece_to_request = matching_pieces.pop()
+          # piece_to_request = matching_pieces.pop()
+          piece_to_request = max(matching_pieces)
           self.torrent.on_piece_downloading(piece_to_request)
           await peer.schedule_piece_download(piece_to_request)
         else:
