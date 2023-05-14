@@ -13,7 +13,7 @@ CLIENT_NAME = 'Acheron'
 
 class Client:
   def __init__(self, torrent_file):
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
 
     logging.info(f'{CLIENT_NAME} {VERSION} - A torrent client')
 

@@ -27,6 +27,7 @@ class PeerManager(EventEmitter):
 
       @capture(peer)
       async def on_panic(peer, reason):
+        logging.warn(f'[{peer}] on_panic: {reason}')
         self.peers.remove(peer)
         self.downloading_from.discard(peer)
         self.uploading_to.discard(peer)
@@ -50,7 +51,7 @@ class PeerManager(EventEmitter):
 
       @capture(peer)
       async def on_connect(peer):
-        logging.debug(f'Connection event for {peer}')
+        logging.info(f'Connected to: {peer}')
         await self.find_peer_to_download_from()
         await self.find_peer_to_upload_to()
         await peer.main_loop()
@@ -119,9 +120,11 @@ class PeerManager(EventEmitter):
   async def connect_to_new_peer(self):
     prioritized_peers = list(self.peers)
     shuffle(prioritized_peers)
+    logging.warn(f'Peers left: {len(prioritized_peers)}')
 
     for peer in prioritized_peers:
       if not peer.is_connected and not peer.is_connecting:
+        logging.warn(f'Connecting to {peer}')
         await peer.connect()
         return True
     return False

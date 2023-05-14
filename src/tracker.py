@@ -1,6 +1,5 @@
 # TODO: implement our own HTTP library
 import requests
-from pprint import pprint
 import logging
 import bencodepy
 import socket
@@ -35,9 +34,7 @@ class Tracker:
       logging.error(r.content)
       raise Exception(f'Error requesting from tracker: {r.status_code}')
     logging.debug('Received tracker response')
-    pprint(r.content)
     decoded = bencodepy.decode(r.content)
-    pprint(decoded)
     self.parse_tracker_response(decoded)
 
   def parse_tracker_response(self, response):

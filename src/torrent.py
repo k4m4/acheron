@@ -67,15 +67,30 @@ class Torrent:
     # TODO: pending must timeout at some point
     self.pending.add(piece_index)
 
-  def human_download_speed(self):
+  def download_speed(self): # bytes per second
     recent_timestamp = self.recent_pieces_downloaded[0]['timestamp']
     recent_amount = sum([piece['amount'] for piece in self.recent_pieces_downloaded])
-    download_speed = recent_amount / (time() - recent_timestamp) # bytes per second
-    if len(self.recent_pieces_downloaded) > 1:
-      ret = f'{download_speed / 1024:.2f} KB/s'
-    else:
-      ret = 'Unknown'
-    return ret
+    download_speed = recent_amount / (time() - recent_timestamp)
+    return download_speed
+
+  def human_download_speed(self):
+    download_speed = self.download_speed()
+    if len(self.recent_pieces_downloaded) <= 1:
+      return 'Unknown'
+    return f'{download_speed / 1024:.2f} KB/s'
+
+  def human_eta(self):
+    if len(self.recent_pieces_downloaded) <= 1:
+      return 'Unknown'
+    download_speed = self.download_speed()
+    secs = (self.length - len(self.have)) / download_speed
+    if secs > 100:
+      mins = secs / 60
+      if mins > 100:
+        hours = mins / 60
+        return f'{hours:.2f} hours'
+      return f'{mins:.2f} minutes'
+    return f'{secs:.2f} seconds'
 
   def on_piece_downloaded(self, index, data):
     self.recent_pieces_downloaded.append({
@@ -94,6 +109,7 @@ class Torrent:
     self.pending.remove(index)
     logging.info(f'Download progress: {len(self.have) / self.num_pieces * 100:.2f}%')
     self.storage.write_meta_file(self.have)
+    logging.info(f'ETA: {self.human_eta()}')
 
     if len(self.have) == self.num_pieces:
       logging.info(f'Download complete: {self.storage.data_file}')
