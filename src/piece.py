@@ -10,7 +10,7 @@ class Piece(EventEmitter):
     self.index = index
     assert 0 <= index < self.peer.torrent.num_pieces
     self.length = self.expected_length(self.peer.torrent.length, usual_piece_length, index)
-    self.num_blocks = ceil(usual_piece_length / block_length)
+    self.num_blocks = ceil(self.length / block_length)
     self.hash = hash
     self.block_length = block_length
     self.data = bytearray(self.length)
