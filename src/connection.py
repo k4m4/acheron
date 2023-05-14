@@ -49,7 +49,7 @@ class Connection(metaclass=abc.ABCMeta):
       TimeoutError,
       OSError
     ) as e:
-      self.panic(f'Failed to establish a connection: {e}')
+      await self.panic(f'Failed to establish a connection: {e}')
       return
 
     self.is_connected = True
@@ -121,7 +121,7 @@ class Connection(metaclass=abc.ABCMeta):
     await self.writer.wait_closed()
 
   async def panic(self, reason):
-    self.close()
+    await self.close()
     self._warning(f'Peer panic: {reason}')
     self.is_connected = False
     self.is_connecting = False
