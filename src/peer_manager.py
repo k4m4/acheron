@@ -2,6 +2,7 @@ import logging
 from random import shuffle
 from peer import Peer
 from event_emitter import EventEmitter
+from message import HaveMessage
 import asyncio
 
 # TODO: adjust these limits
@@ -58,14 +59,19 @@ class PeerManager(EventEmitter):
 
       async def on_piece_downloaded(piece_index, data):
         await self.emit('piece_downloaded', piece_index, data)
+        await self.broadcast(HaveMessage(piece_index=piece_index))
 
       peer.on('panic', on_panic)
-      # TODO: inform other peers that this piece is now available
       peer.on('piece_downloaded', on_piece_downloaded)
       peer.on('available', on_available)
       peer.on('connect', on_connect)
 
       self.peers.add(peer)
+
+  async def broadcast(self, message):
+    for peer in self.peers:
+      if peer.is_connected:
+        await peer.send(message)
 
   async def connect_to_new_peer(self):
     prioritized_peers = list(self.peers)

@@ -64,8 +64,8 @@ class Peer(Connection, EventEmitter):
   async def on_connect(self):
     self._debug(f'Connected')
     await self._send_handshake()
+    await self._send_bitfield()
     await self.emit('connect')
-    # TODO: send bitfield
 
   async def on_data(self, buffer):
     if not self.handshook:
@@ -173,7 +173,7 @@ class Peer(Connection, EventEmitter):
       return
 
     data = self.torrent.read_piece(index)[begin:begin+length]
-    await self._send(PieceMessage(index=index, begin=begin, block=data))
+    await self.send(PieceMessage(index=index, begin=begin, block=data))
 
   # This message represents the data of a single block within the piece,
   # not a whole piece
@@ -230,7 +230,7 @@ class Peer(Connection, EventEmitter):
       block_index=block_index,
       usual_block_length=BLOCK_LENGTH
     )
-    await self._send(
+    await self.send(
       RequestMessage(index=piece.index, begin=block_index*BLOCK_LENGTH, length=block_length)
     )
 
@@ -302,7 +302,12 @@ class Peer(Connection, EventEmitter):
       peer_id=self.torrent.client.peer_id
     )
 
-    await self._send(handshake_message)
+    await self.send(handshake_message)
+
+  async def _send_bitfield(self):
+    self._debug(f'Sending bitfield')
+    bitfield_message = BitfieldMessage.from_pieces(self.torrent.have, self.torrent.num_pieces)
+    await self.send(bitfield_message)
 
   async def make_interested(self, am_interested=True):
     self._debug(f'Changing interested flag to {am_interested}')
@@ -310,21 +315,21 @@ class Peer(Connection, EventEmitter):
       return
     self.am_interested = am_interested
     if am_interested:
-      await self._send(InterestedMessage())
+      await self.send(InterestedMessage())
     else:
-      await self._send(NotInterestedMessage())
+      await self.send(NotInterestedMessage())
 
   async def _make_choking(self, am_choking=True):
     self._debug(f'Changing choking flag to {am_choked}')
     if am_choking == self.am_choking:
       return
     self.am_choking = am_choking
-    if am_choked:
-      await self._send(ChokeMessage())
+    if am_choking:
+      await self.send(ChokeMessage())
     else:
-      await self._send(UnchokeMessage())
+      await self.send(UnchokeMessage())
 
-  async def _send(self, message):
+  async def send(self, message):
     self._debug(f'-> {message}')
     await self.send_data(message.to_bytes())
 
