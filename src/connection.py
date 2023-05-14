@@ -23,11 +23,11 @@ class Connection(metaclass=abc.ABCMeta):
 
     try:
       socket.inet_pton(socket.AF_INET6, self.ip)
-      protocol = socket.AF_INET6
+      # protocol = socket.AF_INET6
     except socket.error:
       try:
         socket.inet_pton(socket.AF_INET, self.ip)
-        protocol = socket.AF_INET
+        # protocol = socket.AF_INET
       except socket.error:
         self._warning(f'Invalid IP address: {self.ip}')
         return
