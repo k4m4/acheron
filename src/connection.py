@@ -60,10 +60,14 @@ class Connection(metaclass=abc.ABCMeta):
 
     buffer = b''
     while True:
-      # blocking
       try:
         # buffer += self.socket.recv(4096)
-        buffer += await self.reader.read(4096)
+        new_buffer = await self.reader.read(4096)
+        if not new_buffer:
+          self.panic('Read an empty buffer')
+          return
+
+        buffer += new_buffer
       except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
         self.panic('Connection with remote peer failed while receiving data')
         self.is_processing = False
@@ -99,6 +103,8 @@ class Connection(metaclass=abc.ABCMeta):
     self.close()
     self._warning(f'Peer panic: {reason}')
     self.is_connected = False
+    self.is_connecting = False
+    self.is_processing = False
     await self.on_panic(reason)
 
   def _identifier(self):
