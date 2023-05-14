@@ -14,6 +14,19 @@ class Connection(metaclass=abc.ABCMeta):
     self.ip = ip
     self.port = port
 
+  @staticmethod
+  def validate_ip(ip):
+    try:
+      socket.inet_pton(socket.AF_INET6, ip)
+      # protocol = socket.AF_INET6
+    except socket.error:
+      try:
+        socket.inet_pton(socket.AF_INET, ip)
+        # protocol = socket.AF_INET
+      except socket.error:
+        return False
+    return True
+
   async def connect(self):
     if self.is_connecting:
       raise ConnectionError('The peer is already trying to connect')
@@ -21,16 +34,9 @@ class Connection(metaclass=abc.ABCMeta):
       raise ConnectionError('The peer is already connected')
     self.is_connecting = True
 
-    try:
-      socket.inet_pton(socket.AF_INET6, self.ip)
-      # protocol = socket.AF_INET6
-    except socket.error:
-      try:
-        socket.inet_pton(socket.AF_INET, self.ip)
-        # protocol = socket.AF_INET
-      except socket.error:
-        self._warning(f'Invalid IP address: {self.ip}')
-        return
+    if not self.validate_ip(self.ip):
+      self._warning(f'Invalid IP address: {self.ip}')
+      return
 
     # self.socket = socket.socket(protocol, socket.SOCK_STREAM)
 
