@@ -125,6 +125,7 @@ class Torrent:
     if b'files' in info: # multifile mode
       self.info(f'Downloading file: {info[b"files"]}')
       self.files = info[b'files']
+      raise NotImplemented('Multifile mode is not supported')
       # TODO: handle multifile mode
       # TODO: fill in self.length
     else: # single file mode
