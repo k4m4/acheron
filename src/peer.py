@@ -35,6 +35,7 @@ class Peer(Connection, EventEmitter):
   def __init__(self, torrent, peer_info):
     EventEmitter.__init__(self)
     self.torrent = torrent
+    self.peer_info = peer_info
 
     assert torrent.piece_length % BLOCK_LENGTH == 0
 
@@ -211,14 +212,12 @@ class Peer(Connection, EventEmitter):
         await self.emit('available')
 
     async def on_piece_error(reason):
-      self._warning(f'Piece {piece_index} failed: {reason}')
       # TODO: don't re-request the piece; instead, disconnect from peer and inform PeerManager
-      await self.request_piece(piece)
+      await self.panic(f'Piece {piece_index} failed: {reason}')
 
     async def on_block_error(block_index, reason):
-      self._warning(f'Block of piece {piece_index} failed: {reason}; re-requesting block')
       # TODO: don't re-request the block; instead, disconnect from peer and inform PeerManager
-      await self.request_block(piece, block_index)
+      await self.panic(f'Block of piece {piece_index} failed: {reason}')
 
     piece.on('completed', on_completed)
     piece.on('piece_error', on_piece_error)

@@ -5,6 +5,7 @@ from event_emitter import EventEmitter
 from message import HaveMessage
 from capture import capture
 import asyncio
+from collections import deque
 
 # TODO: adjust these limits
 MAX_ACTIVE_CONNECTIONS = 20
@@ -16,10 +17,11 @@ class PeerManager(EventEmitter):
     EventEmitter.__init__(self)
 
     self.torrent = torrent
-    self.peers = set()
+    self.connected_peers = set()
     self.downloading_from = set()
     self.uploading_to = set()
 
+    peers = []
     for i, peer_info in enumerate(peers_info):
       logging.debug(f'Peer {i}: {peer_info}')
 
@@ -28,9 +30,11 @@ class PeerManager(EventEmitter):
       @capture(peer)
       async def on_panic(peer, reason):
         logging.warn(f'[{peer}] on_panic: {reason}')
-        self.peers.remove(peer)
+        self.connected_peers.discard(peer)
         self.downloading_from.discard(peer)
         self.uploading_to.discard(peer)
+        assert not peer.is_connecting and not peer.is_connected
+        self.candidate_peers.appendleft(Peer(torrent, peer.peer_info))
         await self.connect_to_new_peer()
         await self.find_peer_to_download_from()
         await self.find_peer_to_upload_to()
@@ -52,6 +56,8 @@ class PeerManager(EventEmitter):
       @capture(peer)
       async def on_connect(peer):
         logging.info(f'Connected to: {peer}')
+        assert peer.is_connected and not peer.is_connecting
+        self.connected_peers.add(peer)
         await self.find_peer_to_download_from()
         await self.find_peer_to_upload_to()
         await peer.main_loop()
@@ -76,14 +82,18 @@ class PeerManager(EventEmitter):
       peer.on('interested', on_interested)
       peer.on('not_interested', on_not_interested)
 
-      self.peers.add(peer)
+      peers.append(peer)
+
+    shuffle(peers)
+    self.candidate_peers = deque(peers)
 
   async def find_peer_to_download_from(self):
     if len(self.downloading_from) >= MAX_DOWNLOADING_FROM:
       return
 
-    for peer in self.peers:
-      if not peer.is_connected or peer in self.downloading_from:
+    for peer in self.connected_peers.copy():
+      assert peer.is_connected
+      if peer in self.downloading_from:
         continue
       if not peer.has & self.torrent.want:
         continue
@@ -100,8 +110,9 @@ class PeerManager(EventEmitter):
 
     new_peer_count = MAX_UPLOADING_TO - len(self.uploading_to)
 
-    for peer in list(self.downloading_from) + list(self.peers):
-      if not peer.is_connected or peer in self.uploading_to:
+    for peer in list(self.downloading_from) + list(self.connected_peers):
+      assert peer.is_connected
+      if peer in self.uploading_to:
         continue
       if not peer.peer_interested:
         continue
@@ -113,21 +124,21 @@ class PeerManager(EventEmitter):
     logging.debug(f'Currently uploading to {len(self.uploading_to)} peers')
 
   async def broadcast(self, message):
-    for peer in self.peers:
-      if peer.is_connected:
-        await peer.send(message)
+    for peer in self.connected_peers:
+      assert peer.is_connected
+      await peer.send(message)
 
   async def connect_to_new_peer(self):
-    prioritized_peers = list(self.peers)
-    shuffle(prioritized_peers)
-    logging.warn(f'Peers left: {len(prioritized_peers)}')
+    if not self.candidate_peers:
+      logging.warn('Exhausted candidate peers')
+      # TODO: handle this case
+      return False
 
-    for peer in prioritized_peers:
-      if not peer.is_connected and not peer.is_connecting:
-        logging.warn(f'Connecting to {peer}')
-        await peer.connect()
-        return True
-    return False
+    peer = self.candidate_peers.pop()
+    assert not peer.is_connected and not peer.is_connecting
+    logging.info(f'Connecting to {peer}')
+    await peer.connect()
+    return True
 
   async def connect(self):
     peer_tasks = []

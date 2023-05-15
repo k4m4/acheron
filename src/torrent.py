@@ -35,7 +35,9 @@ class Torrent:
 
     self.have = self.storage.read_meta_file()
 
-    logging.info(f'We have already downloaded {len(self.have) / self.num_pieces * 100:.2f}% of the torrent')
+    downloaded_percentage = len(self.have) / self.num_pieces * 100
+    if downloaded_percentage > 0:
+      logging.info(f'We have already downloaded {downloaded_percentage:.2f}% of the torrent')
 
     self.want = set(range(self.num_pieces)) - self.have
 
