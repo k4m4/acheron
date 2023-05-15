@@ -39,7 +39,6 @@ class Storage:
     if not file_exists:
       write_mode = 'wb'
     with open(self.data_file, write_mode) as f:
-      print(f'Offset: {index * piece_length}')
       f.seek(index * piece_length)
       f.write(data)
 
