@@ -3,7 +3,9 @@ import logging
 import abc
 import asyncio
 
-OPEN_CONNECTION_TIMEOUT = 1 # second
+OPEN_CONNECTION_TIMEOUT = 15 # seconds
+CLOSE_CONNECTION_TIMEOUT = 15 # seconds
+READ_TIMEOUT = 30 # seconds
 
 class Connection(metaclass=abc.ABCMeta):
   def __init__(self, ip, port):
@@ -43,6 +45,9 @@ class Connection(metaclass=abc.ABCMeta):
 
     try:
       self.reader, self.writer = await asyncio.wait_for(asyncio.open_connection(self.ip, self.port), timeout=OPEN_CONNECTION_TIMEOUT)
+    except asyncio.TimeoutError:
+      await self.panic('Timed out while trying to establish a connection')
+      return
     except (
       ConnectionResetError,
       ConnectionAbortedError,
@@ -70,12 +75,15 @@ class Connection(metaclass=abc.ABCMeta):
     buffer = b''
     while True:
       try:
-        new_buffer = await self.reader.read(4096)
+        new_buffer = await asyncio.wait_for(self.reader.read(4096), timeout=READ_TIMEOUT)
         if not new_buffer:
           await self.panic('Read an empty buffer')
           return
 
         buffer += new_buffer
+      except asyncio.TimeoutError:
+        await self.panic('Have not received any data from remote peer in a while')
+        return
       except (
         ConnectionResetError,
         ConnectionAbortedError,
@@ -85,7 +93,6 @@ class Connection(metaclass=abc.ABCMeta):
         OSError
       ) as e:
         await self.panic(f'Connection with remote peer failed while receiving data: {e}')
-        self.is_processing = False
         return
 
       # self._debug(f'Received {len(buffer)} bytes')
@@ -123,12 +130,24 @@ class Connection(metaclass=abc.ABCMeta):
       return
 
     self.writer.close()
-    await self.writer.wait_closed()
+    try:
+      await asyncio.wait_for(self.writer.wait_closed(), timeout=CLOSE_CONNECTION_TIMEOUT)
+    except (
+      ConnectionResetError,
+      ConnectionAbortedError,
+      BrokenPipeError,
+      asyncio.CancelledError,
+      TimeoutError,
+      OSError
+    ) as e:
+      self._warning(f'Could not close connection with remote peer cleanly: {e}')
 
   async def panic(self, reason):
-    await self.close()
     self._warning(f'Peer panic: {reason}')
-    self.is_connected = False
+    if self.is_connected:
+      await self.close()
+      self.is_connected = False
+
     self.is_connecting = False
     self.is_processing = False
     await self.on_panic(reason)
