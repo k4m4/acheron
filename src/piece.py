@@ -27,6 +27,9 @@ class Piece(EventEmitter):
 
     return (torrent_length - 1) % usual_piece_length + 1
 
+  def __str__(self):
+    return f'Piece {self.index} of length {self.length}'
+
   async def on_block_arrival(self, begin, data):
     self.data[begin:begin+len(data)] = data
     block_index = begin // self.block_length
