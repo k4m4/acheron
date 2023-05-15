@@ -85,6 +85,9 @@ class Torrent:
       return 'Unknown'
     download_speed = self.download_speed()
     secs = (self.length - len(self.have) * self.piece_length) / download_speed
+    if secs < 0:
+      secs = 0
+
     if secs > 100:
       mins = secs / 60
       if mins > 100:
