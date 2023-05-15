@@ -3,6 +3,8 @@ import logging
 import abc
 import asyncio
 
+OPEN_CONNECTION_TIMEOUT = 1 # second
+
 class Connection(metaclass=abc.ABCMeta):
   def __init__(self, ip, port):
     self.reader = None
@@ -40,7 +42,7 @@ class Connection(metaclass=abc.ABCMeta):
     self._debug(f'Connecting to {self.ip}:{self.port}')
 
     try:
-      self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
+      self.reader, self.writer = await asyncio.wait_for(asyncio.open_connection(self.ip, self.port), timeout=OPEN_CONNECTION_TIMEOUT)
     except (
       ConnectionResetError,
       ConnectionAbortedError,
