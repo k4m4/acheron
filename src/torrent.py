@@ -11,11 +11,9 @@ import sys
 from storage import Storage
 from time import time
 import asyncio
+from exception import ExecutionCompleted
 
 DOWNLOAD_SPEED_ESTIMATE_WINDOW = 100
-
-class ExecutionCompleted(Exception):
-  pass
 
 class Torrent:
   def __init__(self, client, bencoded_metadata):
@@ -40,6 +38,13 @@ class Torrent:
     logging.info(f'We have already downloaded {len(self.have) / self.num_pieces * 100:.2f}% of the torrent')
 
     self.want = set(range(self.num_pieces)) - self.have
+
+    num_pieces_left = len(self.want)
+    if num_pieces_left == 0:
+      raise ExecutionCompleted('We already have all the pieces')
+
+    logging.info(f'We still need to download {num_pieces_left} piece{"s" if num_pieces_left != 1 else ""}')
+
     self.pending = set()
     self.recent_pieces_downloaded = [] # for estimating download speed
 
@@ -56,11 +61,7 @@ class Torrent:
     self.peer_manager = PeerManager(self, self.tracker.peers_info)
     self.peer_manager.on('piece_downloaded', self.on_piece_downloaded)
 
-    try:
-      asyncio.run(self.peer_manager.connect())
-    except ExecutionCompleted:
-      # Terminate program because execution successfully completed
-      sys.exit(0)
+    asyncio.run(self.peer_manager.connect())
 
   def on_piece_downloading(self, piece_index):
     self.want.remove(piece_index)
@@ -112,8 +113,7 @@ class Torrent:
     logging.info(f'ETA: {self.human_eta()}')
 
     if len(self.have) == self.num_pieces:
-      logging.info(f'Download complete: {self.storage.data_file}')
-      raise ExecutionCompleted()
+      raise ExecutionCompleted(f'Data saved to {self.storage.data_file}')
 
   def read_piece(self, index):
     assert 0 <= index < self.num_pieces

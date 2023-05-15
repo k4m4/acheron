@@ -3,6 +3,8 @@ from secrets import token_bytes
 import logging
 import warnings
 import argparse
+import sys
+from exception import ExecutionCompleted
 
 LISTEN_PORT = 6881
 CLIENT_ID = b'-AH0001-'
@@ -24,7 +26,12 @@ class Client:
 
     with open(torrent_file, 'rb') as f:
       metadata = f.read()
-      torrent = Torrent(self, metadata)
+      try:
+        torrent = Torrent(self, metadata)
+      except ExecutionCompleted as e:
+        # Terminate program because execution completed successfully
+        logging.info(f'Execution completed: {e}')
+        sys.exit(0)
 
 def main():
   parser = argparse.ArgumentParser(

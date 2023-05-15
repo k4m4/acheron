@@ -1,0 +1,2 @@
+class ExecutionCompleted(Exception):
+  pass
