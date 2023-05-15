@@ -114,6 +114,7 @@ class Torrent:
     logging.info(f'Download progress: {len(self.have) / self.num_pieces * 100:.2f}%')
     self.storage.write_meta_file(self.have)
     logging.info(f'ETA: {self.human_eta()}')
+    logging.info(f'Number of connected peers: {len(self.peer_manager.connected_peers)}')
 
     if len(self.have) == self.num_pieces:
       raise ExecutionCompleted(f'Data saved to {self.storage.data_file}')
