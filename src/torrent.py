@@ -113,7 +113,7 @@ class Torrent:
     self.have.add(index)
     # TODO: handle receiving a piece that was not pending
     self.pending.remove(index)
-    logging.info(f'Download progress: {len(self.have) / self.num_pieces * 100:.2f}%')
+    logging.info(f'Download progress: {len(self.have) / self.num_pieces * 100:.2f}% ({len(self.have)}/{self.num_pieces})')
     self.storage.write_meta_file(self.have)
     logging.info(f'ETA: {self.human_eta()}')
     logging.info(f'Number of connected peers: {len(self.peer_manager.connected_peers)}')
