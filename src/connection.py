@@ -5,7 +5,7 @@ import asyncio
 
 OPEN_CONNECTION_TIMEOUT = 15 # seconds
 CLOSE_CONNECTION_TIMEOUT = 15 # seconds
-READ_TIMEOUT = 30 # seconds
+READ_TIMEOUT = 2 * 60 # seconds
 
 class Connection(metaclass=abc.ABCMeta):
   def __init__(self, ip, port):
