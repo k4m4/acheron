@@ -7,19 +7,32 @@ from capture import capture
 import asyncio
 from collections import deque
 
-# TODO: adjust these limits
-MAX_ACTIVE_CONNECTIONS = 20
-MAX_DOWNLOADING_FROM = 5
-MAX_UPLOADING_TO = 5
-
 class PeerManager(EventEmitter):
-  def __init__(self, torrent, peers_info):
+  def __init__(
+    self,
+    torrent,
+    peers_info,
+    max_active_connections,
+    max_downloading_from,
+    max_uploading_to
+  ):
     EventEmitter.__init__(self)
+
+    logging.info('Initializing peer manager with:')
+    logging.info(f'  max_active_connections: {max_active_connections}')
+    logging.info(f'  max_downloading_from: {max_downloading_from}')
+    logging.info(f'  max_uploading_to: {max_uploading_to}')
 
     self.torrent = torrent
     self.connected_peers = set()
     self.downloading_from = set()
     self.uploading_to = set()
+
+    self.max_active_connections = max_active_connections
+    self.max_downloading_from = max_downloading_from
+    self.max_uploading_to = max_uploading_to
+
+    self.end_game = False
 
     peers = []
     for i, peer_info in enumerate(peers_info):
@@ -34,6 +47,7 @@ class PeerManager(EventEmitter):
         self.downloading_from.discard(peer)
         self.uploading_to.discard(peer)
         assert not peer.is_connecting and not peer.is_connected
+        # Re-initialize peer to clean up any state
         self.candidate_peers.appendleft(Peer(torrent, peer.peer_info))
         await self.connect_to_new_peer()
         await self.find_peer_to_download_from()
@@ -42,7 +56,18 @@ class PeerManager(EventEmitter):
       @capture(peer)
       async def on_available(peer):
         logging.debug(f'{peer} is available')
-        matching_pieces = self.torrent.want & peer.has
+        if not peer.am_interested:
+          logging.debug(f'{peer} unchoked us even though we were not interested')
+          return
+        if self.torrent.want:
+          want = self.torrent.want
+        else:
+          # end game
+          if not self.end_game:
+            self.end_game = True
+            logging.info('Entering end game mode')
+          want = self.torrent.pending
+        matching_pieces = want & peer.has
         if matching_pieces:
           piece_to_request = matching_pieces.pop()
           self.torrent.on_piece_downloading(piece_to_request)
@@ -72,8 +97,10 @@ class PeerManager(EventEmitter):
         await self.find_peer_to_upload_to()
 
       async def on_piece_downloaded(piece_index, data):
-        await self.emit('piece_downloaded', piece_index, data)
-        await self.broadcast(HaveMessage(piece_index=piece_index))
+        had = piece_index in self.torrent.have
+        if not had:
+          await self.emit('piece_downloaded', piece_index, data)
+          await self.broadcast(HaveMessage(piece_index=piece_index))
 
       peer.on('panic', on_panic)
       peer.on('piece_downloaded', on_piece_downloaded)
@@ -88,27 +115,31 @@ class PeerManager(EventEmitter):
     self.candidate_peers = deque(peers)
 
   async def find_peer_to_download_from(self):
-    if len(self.downloading_from) >= MAX_DOWNLOADING_FROM:
+    if len(self.downloading_from) >= self.max_downloading_from:
       return
 
+    found = False
     for peer in self.connected_peers.copy():
       assert peer.is_connected
       if peer in self.downloading_from:
         continue
       if not peer.has & self.torrent.want:
         continue
+      found = True
       self.downloading_from.add(peer)
       await peer.make_interested(True)
-      if len(self.downloading_from) >= MAX_DOWNLOADING_FROM:
+      if len(self.downloading_from) >= self.max_downloading_from:
         break
+    if not found:
+      logging.debug('No peers to download from')
 
     logging.debug(f'Currently downloading from {len(self.downloading_from)} peers')
 
   async def find_peer_to_upload_to(self):
-    if len(self.uploading_to) >= MAX_UPLOADING_TO:
+    if len(self.uploading_to) >= self.max_uploading_to:
       return
 
-    new_peer_count = MAX_UPLOADING_TO - len(self.uploading_to)
+    new_peer_count = self.max_uploading_to - len(self.uploading_to)
 
     for peer in list(self.downloading_from) + list(self.connected_peers):
       assert peer.is_connected
@@ -118,7 +149,7 @@ class PeerManager(EventEmitter):
         continue
       self.uploading_to.add(peer)
       await peer.make_choking(False)
-      if len(self.uploading_to) >= MAX_UPLOADING_TO:
+      if len(self.uploading_to) >= self.max_uploading_to:
         break
 
     logging.debug(f'Currently uploading to {len(self.uploading_to)} peers')
@@ -143,6 +174,6 @@ class PeerManager(EventEmitter):
 
   async def connect(self):
     peer_tasks = []
-    for _ in range(MAX_ACTIVE_CONNECTIONS):
+    for _ in range(self.max_active_connections):
       peer_tasks.append(self.connect_to_new_peer())
     await asyncio.gather(*peer_tasks)

@@ -11,12 +11,19 @@ import sys
 from storage import Storage
 from time import time
 import asyncio
-from exception import ExecutionCompleted
+from exceptions import ExecutionCompleted
 
 DOWNLOAD_SPEED_ESTIMATE_WINDOW = 100
 
 class Torrent:
-  def __init__(self, client, bencoded_metadata):
+  def __init__(
+    self,
+    client,
+    bencoded_metadata,
+    max_active_connections,
+    max_downloading_from,
+    max_uploading_to
+  ):
     self.announce_url = None
     self.comment = None
     self.created_by = None
@@ -28,6 +35,8 @@ class Torrent:
     self.length = None
     self.name = None
     self.piece_length = None
+    self.start_time = time()
+    self.event_loop = asyncio.get_event_loop()
 
     # TODO: store data returned from tracker to meta file, in case tracker becomes unavailable
     self._init_from_metadata(bencoded_metadata)
@@ -43,30 +52,40 @@ class Torrent:
 
     num_pieces_left = len(self.want)
     if num_pieces_left == 0:
-      raise ExecutionCompleted('We already have all the pieces')
-
-    logging.info(f'We still need to download {num_pieces_left} piece{"s" if num_pieces_left != 1 else ""}')
+      logging.info('We already have all the pieces')
+      logging.info('Seeding')
+      max_downloading_from = 0
+    else:
+      logging.info(f'We still need to download {num_pieces_left} piece{"s" if num_pieces_left != 1 else ""}')
 
     self.pending = set()
     self.recent_pieces_downloaded = [] # for estimating download speed
 
     self.client = client
 
-    try:
-      self.tracker = Tracker(self)
-    except Exception as e:
-      logging.error(f'Failed to initialize tracker: {e}')
-      sys.exit(1)
+    # try:
+    self.tracker = Tracker(self)
+    # except Exception as e:
+    #   logging.error(f'Failed to initialize tracker: {e}')
+    #   sys.exit(1)
 
     logging.debug(f'Found {len(self.tracker.peers_info)} peers:')
 
-    self.peer_manager = PeerManager(self, self.tracker.peers_info)
+    self.peer_manager = PeerManager(
+      self,
+      self.tracker.peers_info,
+      max_active_connections,
+      max_downloading_from,
+      max_uploading_to
+    )
     self.peer_manager.on('piece_downloaded', self.on_piece_downloaded)
 
-    asyncio.run(self.peer_manager.connect())
+    self.event_loop.create_task(self.peer_manager.connect())
+    self.event_loop.run_forever()
 
   def on_piece_downloading(self, piece_index):
-    self.want.remove(piece_index)
+    # Discard, because we might be in end game
+    self.want.discard(piece_index)
     # TODO: pending must timeout at some point
     self.pending.add(piece_index)
 
@@ -82,14 +101,8 @@ class Torrent:
       return 'Unknown'
     return f'{download_speed / 1024:.2f} KB/s'
 
-  def human_eta(self):
-    if len(self.recent_pieces_downloaded) <= 1:
-      return 'Unknown'
-    download_speed = self.download_speed()
-    secs = (self.length - len(self.have) * self.piece_length) / download_speed
-    if secs < 0:
-      secs = 0
-
+  @staticmethod
+  def seconds_to_human(secs):
     if secs > 100:
       mins = secs / 60
       if mins > 100:
@@ -98,7 +111,20 @@ class Torrent:
       return f'{mins:.2f} minutes'
     return f'{secs:.2f} seconds'
 
-  def on_piece_downloaded(self, index, data):
+  def human_eta(self):
+    if len(self.recent_pieces_downloaded) <= 1:
+      return 'Unknown'
+    download_speed = self.download_speed()
+    bytes_downloaded = len(self.have) * self.piece_length
+    secs = (self.length - bytes_downloaded) / download_speed
+    if secs < 0:
+      # TODO: account for last piece being smaller
+      secs = 0
+
+    return self.seconds_to_human(secs)
+
+  async def on_piece_downloaded(self, index, data):
+    # TODO: In end game, cancel this piece from other peers
     self.recent_pieces_downloaded.append({
       'index': index,
       'amount': len(data),
@@ -116,10 +142,18 @@ class Torrent:
     logging.info(f'Download progress: {len(self.have) / self.num_pieces * 100:.2f}% ({len(self.have)}/{self.num_pieces})')
     self.storage.write_meta_file(self.have)
     logging.info(f'ETA: {self.human_eta()}')
-    logging.info(f'Number of connected peers: {len(self.peer_manager.connected_peers)}')
+    logging.info(f'Connected peers: {len(self.peer_manager.connected_peers)}.'\
+                  + f'\tDownloading from: {len(self.peer_manager.downloading_from)}.'\
+                  + f'\tUploading to: {len(self.peer_manager.uploading_to)}')
 
     if len(self.have) == self.num_pieces:
-      raise ExecutionCompleted(f'Data saved to {self.storage.data_file}')
+      logging.info('Download completed')
+      logging.info(f'Data saved to {self.storage.data_file}')
+      download_duration = self.seconds_to_human(time() - self.start_time)
+      logging.info(f'Download took: {download_duration}')
+      # TODO: seed here
+      logging.info('Shutting down')
+      self.event_loop.stop()
 
   def read_piece(self, index):
     assert 0 <= index < self.num_pieces

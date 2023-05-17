@@ -5,7 +5,8 @@ import asyncio
 
 OPEN_CONNECTION_TIMEOUT = 15 # seconds
 CLOSE_CONNECTION_TIMEOUT = 15 # seconds
-READ_TIMEOUT = 2 * 60 # seconds
+# TODO: Increase this timeout if we're not requesting anything
+READ_TIMEOUT = 15 # seconds
 
 class Connection(metaclass=abc.ABCMeta):
   def __init__(self, ip, port):
@@ -100,16 +101,13 @@ class Connection(metaclass=abc.ABCMeta):
         continue
       while True:
         old_buffer_len = len(buffer)
-        try:
-          buffer = await self.on_data(buffer)
-          if not buffer:
-            # we consumed everything -- no need to keep processing current buffer
-            break
-          if len(buffer) == old_buffer_len:
-            # we consumed nothing -- no need to keep processing current buffer
-            break
-        except ValueError as e:
-          pass
+        buffer = await self.on_data(buffer)
+        if not buffer:
+          # we consumed everything -- no need to keep processing current buffer
+          break
+        if len(buffer) == old_buffer_len:
+          # we consumed nothing -- no need to keep processing current buffer
+          break
 
   async def send_data(self, data):
     try:

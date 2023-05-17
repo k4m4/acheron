@@ -7,15 +7,13 @@ from math import ceil
 from piece import Block, Piece
 from connection import Connection
 from event_emitter import EventEmitter
+from exceptions import ProtocolError
 
 PROTOCOL_STRING = b'BitTorrent protocol'
 TEST_WITH_LOCAL_PEER = False
 BLOCK_LENGTH = 16 * 1024
 
 NUM_PARALLEL_PIECE_REQUESTS_PER_PEER = 1
-
-class ProtocolException(Exception):
-  pass
 
 dispatch_handlers = {}
 
@@ -62,6 +60,12 @@ class Peer(Connection, EventEmitter):
 
     self._debug(f'Creating peer')
 
+  async def main_loop(self):
+    try:
+      await super().main_loop()
+    except ProtocolError as e:
+      await self.panic(e)
+
   async def on_connect(self):
     self._debug(f'Connected')
     await self._send_handshake()
@@ -85,6 +89,7 @@ class Peer(Connection, EventEmitter):
     except (ValueError, struct.error) as e:
       # We may not have enough data to parse the full message yet
       # self._debug(e)
+      # self._debug(f'Not enough data to parse message yet: {e}')
       return buffer
 
     await self._on_message(message)
@@ -103,8 +108,9 @@ class Peer(Connection, EventEmitter):
 
   @dispatcher(UnchokeMessage)
   async def _on_unchoke(self, _):
-    self.peer_choking = False
-    await self.emit('available')
+    if self.peer_choking:
+      self.peer_choking = False
+      await self.emit('available')
 
   @dispatcher(InterestedMessage)
   async def _on_interested(self, _):
@@ -187,11 +193,14 @@ class Peer(Connection, EventEmitter):
 
     piece_index = piece_message.data['index']
 
-    piece = self.pending_pieces[piece_index]
-    await piece.on_block_arrival(piece_message.data['begin'], piece_message.data['block'])
+    if piece_index in self.pending_pieces:
+      # Needed for end game
+      piece = self.pending_pieces[piece_index]
+      await piece.on_block_arrival(piece_message.data['begin'], piece_message.data['block'])
 
   async def schedule_piece_download(self, piece_index):
-    assert piece_index not in self.pending_pieces
+    # Don't assert this, because we might be in end game
+    # assert piece_index not in self.pending_pieces
 
     piece = Piece(
       self,
@@ -297,7 +306,7 @@ class Peer(Connection, EventEmitter):
   async def _close_with_error(self, msg):
     self._warning(msg)
     await self.close()
-    raise ProtocolException(msg)
+    raise ProtocolError(msg)
 
   async def _send_handshake(self):
     self._debug(f'Sending handshake')
@@ -321,6 +330,8 @@ class Peer(Connection, EventEmitter):
     self.am_interested = am_interested
     if am_interested:
       await self.send(InterestedMessage())
+      if not self.peer_choking:
+        await self.emit('available')
     else:
       await self.send(NotInterestedMessage())
 

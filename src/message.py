@@ -2,6 +2,7 @@ import struct
 from pprint import pprint
 import abc
 import logging
+from exceptions import ProtocolError
 
 # TODO: use a proper buffer (https://docs.python.org/3/c-api/buffer.html#bufferobjects)
 class Message(abc.ABC):
@@ -48,7 +49,7 @@ class Message(abc.ABC):
       ]
       message, buffer = message_class[message_id].from_bytes(buffer)
     except IndexError:
-      raise ValueError(f'Unknown message id {message_id}')
+      raise ProtocolError(f'Unknown message id {message_id}')
     return message, buffer
 
   @classmethod
