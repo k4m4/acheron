@@ -129,6 +129,7 @@ class PeerManager(EventEmitter):
       await peer.send(message)
 
   async def connect_to_new_peer(self):
+    logging.info(f'Number of candidate peers left: {len(self.candidate_peers)}')
     if not self.candidate_peers:
       logging.warn('Exhausted candidate peers')
       # TODO: handle this case
