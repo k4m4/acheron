@@ -21,7 +21,7 @@ class Tracker:
       'uploaded': 0,
       'downloaded': 0,
       'left': self.torrent.length,
-      'numwant': len(self.torrent.want),
+      #'numwant': len(self.torrent.want),
       'key': self.torrent.client.key,
       'compact': 1,
       'event': 'started'
