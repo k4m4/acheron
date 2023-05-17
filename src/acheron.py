@@ -16,7 +16,11 @@ DESCRIPTION='A BitTorrent client'
 
 class Client:
   def __init__(self, torrent_file):
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+      format='%(asctime)s %(levelname)-8s %(message)s',
+      level=logging.INFO,
+      datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
     logging.info(f'{CLIENT_NAME} {VERSION} - {DESCRIPTION}')
 
