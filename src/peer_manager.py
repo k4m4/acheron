@@ -124,7 +124,7 @@ class PeerManager(EventEmitter):
     logging.debug(f'Currently uploading to {len(self.uploading_to)} peers')
 
   async def broadcast(self, message):
-    for peer in self.connected_peers:
+    for peer in self.connected_peers.copy():
       assert peer.is_connected
       await peer.send(message)
 
