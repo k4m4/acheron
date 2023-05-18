@@ -150,6 +150,7 @@ class Peer(Connection, EventEmitter):
 
     percentage_peer_has = round((len(self.has) / self.torrent.num_pieces) * 100)
     self._info(f'Peer has {percentage_peer_has}% of pieces')
+    await self.emit('bitfied')
 
   @dispatcher(RequestMessage)
   async def _on_request(self, request_message):

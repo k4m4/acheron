@@ -18,9 +18,10 @@ class Tracker:
       'info_hash': self.torrent.info_hash,
       'peer_id': self.torrent.client.peer_id,
       'port': self.torrent.client.listen_port,
+      # TODO: keep track of how much we've uploaded
       'uploaded': 0,
-      'downloaded': 0,
-      'left': self.torrent.length,
+      'downloaded': len(self.torrent.have) * self.torrent.piece_length,
+      'left': self.torrent.length - len(self.torrent.have) * self.torrent.piece_length,
       #'numwant': len(self.torrent.want),
       'key': self.torrent.client.key,
       'compact': 1,

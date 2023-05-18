@@ -39,80 +39,86 @@ class PeerManager(EventEmitter):
       logging.debug(f'Peer {i}: {peer_info}')
 
       peer = Peer(torrent, peer_info)
-
-      @capture(peer)
-      async def on_panic(peer, reason):
-        logging.warn(f'[{peer}] on_panic: {reason}')
-        self.connected_peers.discard(peer)
-        self.downloading_from.discard(peer)
-        self.uploading_to.discard(peer)
-        assert not peer.is_connecting and not peer.is_connected
-        # Re-initialize peer to clean up any state
-        self.candidate_peers.appendleft(Peer(torrent, peer.peer_info))
-        await self.connect_to_new_peer()
-        await self.find_peer_to_download_from()
-        await self.find_peer_to_upload_to()
-
-      @capture(peer)
-      async def on_available(peer):
-        logging.debug(f'{peer} is available')
-        if not peer.am_interested:
-          logging.debug(f'{peer} unchoked us even though we were not interested')
-          return
-        if self.torrent.want:
-          want = self.torrent.want
-        else:
-          # end game
-          if not self.end_game:
-            self.end_game = True
-            logging.info('Entering end game mode')
-          want = self.torrent.pending
-        matching_pieces = want & peer.has
-        if matching_pieces:
-          piece_to_request = matching_pieces.pop()
-          self.torrent.on_piece_downloading(piece_to_request)
-          await peer.schedule_piece_download(piece_to_request)
-        else:
-          await peer.make_interested(False)
-          self.downloading_from.discard(peer)
-          await self.find_peer_to_download_from()
-          logging.debug(f'No matching pieces between what we want and what {peer} has')
-
-      @capture(peer)
-      async def on_connect(peer):
-        logging.info(f'Connected to: {peer}')
-        assert peer.is_connected and not peer.is_connecting
-        self.connected_peers.add(peer)
-        await self.find_peer_to_download_from()
-        await self.find_peer_to_upload_to()
-        await peer.main_loop()
-
-      @capture(peer)
-      async def on_not_interested(peer):
-        self.uploading_to.discard(peer)
-        await self.find_peer_to_upload_to()
-
-      @capture(peer)
-      async def on_interested(peer):
-        await self.find_peer_to_upload_to()
-
-      async def on_piece_downloaded(piece_index, data):
-        had = piece_index in self.torrent.have
-        if not had:
-          await self.emit('piece_downloaded', piece_index, data)
-          await self.broadcast(HaveMessage(piece_index=piece_index))
-
-      peer.on('panic', on_panic)
-      peer.on('piece_downloaded', on_piece_downloaded)
-      peer.on('available', on_available)
-      peer.on('connect', on_connect)
-      peer.on('interested', on_interested)
-      peer.on('not_interested', on_not_interested)
-
+      self.handle_new_peer(peer)
       peers.append(peer)
 
     shuffle(peers)
     self.candidate_peers = deque(peers)
+
+  def handle_new_peer(self, peer):
+    @capture(peer)
+    async def on_panic(peer, reason):
+      logging.warn(f'[{peer}] on_panic: {reason}')
+      self.connected_peers.discard(peer)
+      self.downloading_from.discard(peer)
+      self.uploading_to.discard(peer)
+      assert not peer.is_connecting and not peer.is_connected
+      # Re-initialize peer to clean up any state
+      self.candidate_peers.appendleft(Peer(self.torrent, peer.peer_info))
+      await self.connect_to_new_peer()
+      await self.find_peer_to_download_from()
+      await self.find_peer_to_upload_to()
+
+    @capture(peer)
+    async def on_available(peer):
+      logging.debug(f'{peer} is available')
+      if not peer.am_interested:
+        logging.debug(f'{peer} unchoked us even though we were not interested')
+        return
+      if self.torrent.want:
+        want = self.torrent.want
+      else:
+        # end game
+        if not self.end_game and len(self.torrent.have) != self.torrent.num_pieces:
+          self.end_game = True
+          logging.info('Entering end game mode')
+        want = self.torrent.pending
+      matching_pieces = want & peer.has
+      if matching_pieces:
+        piece_to_request = matching_pieces.pop()
+        self.torrent.on_piece_downloading(piece_to_request)
+        await peer.schedule_piece_download(piece_to_request)
+      else:
+        await peer.make_interested(False)
+        self.downloading_from.discard(peer)
+        await self.find_peer_to_download_from()
+        logging.debug(f'No matching pieces between what we want and what {peer} has')
+
+    @capture(peer)
+    async def on_connect(peer):
+      logging.info(f'Connected to: {peer}')
+      assert peer.is_connected and not peer.is_connecting
+      self.connected_peers.add(peer)
+      await self.find_peer_to_download_from()
+      await self.find_peer_to_upload_to()
+      await peer.main_loop()
+
+    @capture(peer)
+    async def on_not_interested(peer):
+      self.uploading_to.discard(peer)
+      await self.find_peer_to_upload_to()
+
+    @capture(peer)
+    async def on_interested(peer):
+      await self.find_peer_to_upload_to()
+
+    @capture(peer)
+    async def on_bitfield(peer):
+      await self.find_peer_to_download_from()
+
+    async def on_piece_downloaded(piece_index, data):
+      had = piece_index in self.torrent.have
+      if not had:
+        await self.emit('piece_downloaded', piece_index, data)
+        await self.broadcast(HaveMessage(piece_index=piece_index))
+
+    peer.on('panic', on_panic)
+    peer.on('piece_downloaded', on_piece_downloaded)
+    peer.on('available', on_available)
+    peer.on('connect', on_connect)
+    peer.on('interested', on_interested)
+    peer.on('not_interested', on_not_interested)
+    peer.on('bitfied', on_bitfield)
 
   async def find_peer_to_download_from(self):
     if len(self.downloading_from) >= self.max_downloading_from:

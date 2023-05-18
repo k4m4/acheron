@@ -22,7 +22,10 @@ class Torrent:
     bencoded_metadata,
     max_active_connections,
     max_downloading_from,
-    max_uploading_to
+    max_uploading_to,
+    download_directory,
+    remote_ip,
+    remote_port
   ):
     self.announce_url = None
     self.comment = None
@@ -37,10 +40,11 @@ class Torrent:
     self.piece_length = None
     self.start_time = time()
     self.event_loop = asyncio.get_event_loop()
+    self.single_peer_mode = remote_ip and remote_port
 
     # TODO: store data returned from tracker to meta file, in case tracker becomes unavailable
     self._init_from_metadata(bencoded_metadata)
-    self.storage = Storage(self.name, self.info_hash.hex())
+    self.storage = Storage(download_directory, self.name, self.info_hash.hex())
 
     self.have = self.storage.read_meta_file()
 
@@ -53,7 +57,7 @@ class Torrent:
     num_pieces_left = len(self.want)
     if num_pieces_left == 0:
       logging.info('We already have all the pieces')
-      logging.info('Seeding')
+      logging.info('Seeding...')
       max_downloading_from = 0
     else:
       logging.info(f'We still need to download {num_pieces_left} piece{"s" if num_pieces_left != 1 else ""}')
@@ -71,15 +75,42 @@ class Torrent:
 
     logging.debug(f'Found {len(self.tracker.peers_info)} peers:')
 
+    peers_info = self.tracker.peers_info
+    if self.single_peer_mode:
+      peer_info = {
+        'ip': remote_ip,
+        'port': remote_port,
+        'peer id': None
+      }
+
+      peers_info = [peer_info]
+
     self.peer_manager = PeerManager(
       self,
-      self.tracker.peers_info,
+      peers_info,
       max_active_connections,
       max_downloading_from,
       max_uploading_to
     )
     self.peer_manager.on('piece_downloaded', self.on_piece_downloaded)
 
+    async def handle_new_peer(reader, writer):
+      ip, port = writer.get_extra_info('peername')
+      peer_info = {
+        'ip': ip,
+        'port': port,
+        'peer id': None
+      }
+      peer = Peer(self, peer_info)
+      peer.reader = reader
+      peer.writer = writer
+      peer.is_connected = True
+      peer.ip = ip
+      peer.port = port
+      self.peer_manager.handle_new_peer(peer)
+      await peer.on_connect()
+
+    self.event_loop.create_task(asyncio.start_server(handle_new_peer, '0.0.0.0', self.client.listen_port))
     self.event_loop.create_task(self.peer_manager.connect())
     self.event_loop.run_forever()
 
